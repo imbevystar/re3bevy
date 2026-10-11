@@ -10,6 +10,15 @@ pub struct PedObstacleAvoidance {
     pub walk_around_type: i32,
 }
 
+/// Wander-only progress across frames. A blocked PATH_PED link must not keep
+/// an ambient actor walking into the same static collision indefinitely.
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct PedWanderProgress {
+    pub blocked_seconds: f32,
+    pub blocked_node: Option<usize>,
+    pub retry_at_ms: u32,
+}
+
 /// The absence of this component is native's null obstacle reference.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 #[relationship(relationship_target = PedObstacleFollowers)]

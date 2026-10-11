@@ -577,7 +577,7 @@ use crate::vehicles::Automobile::CAutomobile;
 #[allow(unused_imports)]
 use crate::vehicles::HandlingMgr::cHandlingDataMgr;
 #[allow(unused_imports)]
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 #[allow(unused_imports)]
 use re3bevy_core::core::{General::CGeneral, Timer::CTimer};
 
@@ -811,6 +811,12 @@ fn interpolate_zone_info(day: ZonePedInfo, night: ZonePedInfo, hour: u8) -> Zone
     }
 }
 
+#[derive(SystemParam)]
+pub(crate) struct AmbientPedSpawnTables<'w> {
+    weapon_info: Res<'w, crate::weapons::WeaponInfo::CWeaponInfoStore>,
+    ped_types: Res<'w, crate::peds::PedType::CPedTypeRuntime>,
+}
+
 pub(crate) fn process_ambient_ped_generation(
     mut spawn_diagnostics: ResMut<AmbientPedSpawnDiagnostics>,
     mut ped_models: ResMut<AmbientPedModels>,
@@ -827,7 +833,7 @@ pub(crate) fn process_ambient_ped_generation(
     gangs: Option<Res<CGangs>>,
     clock: Res<re3bevy_core::core::Clock::CClock>,
     timer: Res<CTimer>,
-    weapon_info: Res<crate::weapons::WeaponInfo::CWeaponInfoStore>,
+    tables: AmbientPedSpawnTables,
 ) {
     if cutscene.is_some_and(|c| c.running) {
         return;
@@ -1162,6 +1168,10 @@ pub(crate) fn process_ambient_ped_generation(
             |entity, general| {
                 let ped = &mut entity.ped;
                 ped.char_created_by = RANDOM_CHAR;
+                // insert_population_ped deliberately has no script ped-type
+                // argument. Give ambient actors CPed's native PED.DAT threats
+                // before their first CivilianAI scan.
+                ped.initialise_fear_flags(&tables.ped_types);
                 // CPopulation::AddToPopulation starts with a transparent clump;
                 // CPed::ProcessControl fades it in over subsequent frames.
                 ped.physical.entity.clump_alpha = 0;
@@ -1175,7 +1185,7 @@ pub(crate) fn process_ambient_ped_generation(
                         } else {
                             info.weapon1
                         };
-                        if let Some(type_) = give_ped_weapon_with_info(ped, weapon, 25_001, &weapon_info) {
+                        if let Some(type_) = give_ped_weapon_with_info(ped, weapon, 25_001, &tables.weapon_info) {
                             ped.current_weapon = type_;
                         }
                     }
@@ -1187,7 +1197,7 @@ pub(crate) fn process_ambient_ped_generation(
                         crate::weapons::WeaponType::eWeaponType::WEAPONTYPE_DETONATOR as i32,
                     );
                     if weapon != crate::weapons::WeaponType::eWeaponType::WEAPONTYPE_UNARMED as i32 {
-                        if let Some(type_) = give_ped_weapon_with_info(ped, weapon, 25_001, &weapon_info) {
+                        if let Some(type_) = give_ped_weapon_with_info(ped, weapon, 25_001, &tables.weapon_info) {
                             ped.current_weapon = type_;
                         }
                     }

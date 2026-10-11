@@ -7,6 +7,7 @@ use crate::control::RoadBlocks::process_roadblock_cop_spawns;
 use crate::control::ScriptDomainEffects::process_chase_scene;
 use crate::core::PlayerInfo::process_player_info_runtime;
 use crate::peds::CopPed::process_cop_ai;
+use crate::peds::CivilianPed::process_civilian_ai;
 use crate::peds::PedRecovery::process_script_ped_fall_getup;
 use crate::peds::PedDeath::process_script_ped_deaths;
 use crate::peds::PedAI::process_script_ped_on_foot_objectives;
@@ -47,6 +48,7 @@ impl Plugin for GtaPedSimulationPlugin {
                 super::PedNearby::sync_near_ped_spatial,
             ).chain().after(process_ambient_ped_generation).before(process_near_ped_lists))
             .init_resource::<super::PedCorpse::PedCorpseDiagnostics>()
+            .init_resource::<super::PedCorpse::CorpseBloodPools>()
             .init_resource::<AmbientPedSpawnDiagnostics>()
             .init_resource::<crate::peds::PedEvasionTraffic::PedEvasionDiagnostics>()
             .add_systems(Update, super::PedRecovery::process_pending_fall_animations
@@ -127,8 +129,18 @@ impl Plugin for GtaPedSimulationPlugin {
                 .run_if(in_state(GtaAppState::InGame)))
             .add_systems(
                 Update,
-                process_script_ped_on_foot_objectives
+                process_civilian_ai
+                    .after(process_near_ped_lists)
                     .after(process_cop_ai)
+                    .before(process_script_ped_on_foot_objectives)
+                    .in_set(GtaProcessSet::World)
+                    .run_if(world_actor_processing_enabled)
+                    .run_if(in_state(GtaAppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                process_script_ped_on_foot_objectives
+                    .after(process_civilian_ai)
                     .in_set(GtaProcessSet::World)
                     .run_if(world_actor_processing_enabled)
                     .run_if(in_state(GtaAppState::InGame)),
@@ -145,6 +157,7 @@ impl Plugin for GtaPedSimulationPlugin {
                 Update,
                 process_ambient_ped_wander
                     .after(process_script_ped_weapon_attacks)
+                    .after(crate::collision::VehicleSpatial::sync_vehicle_collision_spatial)
                     .in_set(GtaProcessSet::World)
                     .run_if(world_actor_processing_enabled)
                     .run_if(in_state(GtaAppState::InGame)),

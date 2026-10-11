@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::{
     ecs::system::SystemParam,
-    prelude::{Commands, Entity, Has, Local, Query, Res, ResMut, With, Without},
+    prelude::{Commands, Entity, Has, Local, Query, Res, ResMut, Without},
 };
 use re3bevy_core::core::{Coordinates::CVector, General::CGeneral, Timer::CTimer};
 #[path = "PedWalkAround.rs"]
@@ -721,6 +721,9 @@ pub(crate) fn process_script_ped_on_foot_objectives(
             ped.flags.objective_completed = true;
             ped.flags.script_objective_completed = true;
             ped.set_objective(vitality, eObjective::OBJECTIVE_NONE, now_ms);
+            if ped.char_created_by == super::Ped::RANDOM_CHAR {
+                ped.flags.start_wander_path_on_foot = true;
+            }
             ped.ped_state = PedState::PED_IDLE;
             ped.move_state = eMoveState::PEDMOVE_STILL;
             ped.physical.move_speed = CVector::ZERO;
@@ -731,6 +734,9 @@ pub(crate) fn process_script_ped_on_foot_objectives(
                 ped.flags.objective_completed = true;
                 ped.flags.script_objective_completed = true;
                 ped.set_objective(vitality, eObjective::OBJECTIVE_NONE, now_ms);
+                if ped.char_created_by == super::Ped::RANDOM_CHAR {
+                    ped.flags.start_wander_path_on_foot = true;
+                }
                 ped.ped_state = PedState::PED_IDLE;
                 ped.move_state = eMoveState::PEDMOVE_STILL;
                 ped.physical.move_speed = CVector::ZERO;
@@ -769,6 +775,9 @@ pub(crate) fn process_script_ped_on_foot_objectives(
                     ped.flags.objective_completed = true;
                     ped.flags.script_objective_completed = true;
                     ped.set_objective(vitality, eObjective::OBJECTIVE_NONE, now_ms);
+                    if ped.char_created_by == super::Ped::RANDOM_CHAR {
+                        ped.flags.start_wander_path_on_foot = true;
+                    }
                     ped.ped_state = PedState::PED_IDLE;
                     ped.move_state = eMoveState::PEDMOVE_STILL;
                     ped.physical.move_speed = CVector::ZERO;

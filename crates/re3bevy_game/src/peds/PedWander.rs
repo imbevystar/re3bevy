@@ -9,6 +9,7 @@ use crate::{
         ScriptEntityIndex, ScriptObjectIdentity, ScriptPedIdentity, ScriptVehicleIdentity,
     },
     core::{FileLoader::CFileLoader, Game::resolve_ped_static_motion},
+    collision::VehicleSpatial::VehicleCollisionSpatial,
     entities::Entity::CEntity,
     objects::Object::CObject,
     peds::{
@@ -18,6 +19,7 @@ use crate::{
         },
         PedAnimation::{PedAnimation, PedAnimationSound},
         PedLocomotion::PedLocomotion,
+        PedObstacle::PedWanderProgress,
         PedVitality::PedVitality,
         PlayerPed::{PlayerPedState, player_dynamic_vertical_hit_entity},
         VehicleRelations::InVehicle,
@@ -31,6 +33,7 @@ use crate::{
 #[derive(SystemParam)]
 pub(crate) struct PedWanderWorld<'w, 's> {
     index: Res<'w, ScriptEntityIndex>,
+    vehicle_spatial: Res<'w, VehicleCollisionSpatial>,
     vehicles: Query<'w, 's, (Entity, &'static ScriptVehicleIdentity, &'static VehicleCore)>,
     objects: Query<'w, 's, (Entity, &'static ScriptObjectIdentity, &'static CObject)>,
 }
@@ -68,8 +71,24 @@ impl PedWanderWorld<'_, '_> {
 
     /// Existing lightweight authored vehicle bounds check for ambient fleeing.
     /// The full native sphere/contact response remains in the collision domain.
-    fn vehicle_position_blocked(&self, position: CVector, loader: &CFileLoader) -> bool {
-        self.vehicle_entities().any(|(_, vehicle)| {
+    fn vehicle_position_blocked(
+        &self, position: CVector, loader: &CFileLoader, candidates: &mut Vec<Entity>,
+    ) -> bool {
+        if !self.vehicle_spatial.grid.candidates(position, 3.0, candidates) {
+            warn_once!("ped_wander_invalid_vehicle_sector_query");
+            return false;
+        }
+        candidates.iter().any(|&entity| {
+            let Ok((_, identity, core)) = self.vehicles.get(entity) else {
+                return false;
+            };
+            if self.index.vehicle(identity.handle) != Some(entity) {
+                return false;
+            }
+            let vehicle = &core.physical.entity;
+            if !vehicle.flags.uses_collision {
+                return false;
+            }
             let Some(col) = loader
                 .model_info
                 .col_model(vehicle.model_index.max(0) as usize)
@@ -159,6 +178,23 @@ fn land_new_ambient_ped_on_ground(
     Some(sound)
 }
 
+fn restore_ambient_wander_after_flee(ped: &mut CPed) {
+    ped.ped_state = if ped.last_ped_state == PedState::PED_WANDER_PATH {
+        PedState::PED_WANDER_PATH
+    } else {
+        PedState::PED_IDLE
+    };
+    ped.move_state = if ped.ped_state == PedState::PED_WANDER_PATH {
+        eMoveState::PEDMOVE_WALK
+    } else {
+        eMoveState::PEDMOVE_STILL
+    };
+    if ped.ped_state == PedState::PED_IDLE {
+        // This hand-off is consumed on the next frame, after fleeing ends.
+        ped.flags.start_wander_path_on_foot = true;
+    }
+}
+
 /// Advance random on-foot actors using their authored paths and animations.
 /// Other actor poses are read directly from their current ECS components.
 pub(crate) fn process_ambient_ped_wander(
@@ -171,6 +207,7 @@ pub(crate) fn process_ambient_ped_wander(
             &PedVitality,
             &mut PedLocomotion,
             &mut PedAnimation,
+            &mut PedWanderProgress,
             Has<InVehicle>,
         ),
         Without<PlayerPedState>,
@@ -180,13 +217,14 @@ pub(crate) fn process_ambient_ped_wander(
     timer: Res<CTimer>,
     mut general: ResMut<CGeneral>,
     mut commands: Commands,
+    mut vehicle_candidates: Local<Vec<Entity>>,
 ) {
     let dt = timer.time_step_in_seconds().clamp(0.0, 0.05);
     if dt <= 0.0 {
         return;
     }
     let now_ms = timer.time_in_milliseconds();
-    for (ped_entity, identity, mut ped, vitality, mut locomotion, mut animation, seated) in
+    for (ped_entity, identity, mut ped, vitality, mut locomotion, mut animation, mut progress, seated) in
         &mut peds
     {
         if world.index.ped(identity.handle) != Some(ped_entity)
@@ -199,12 +237,32 @@ pub(crate) fn process_ambient_ped_wander(
         let ped = &mut *ped;
         let locomotion = &mut *locomotion;
         let animation = &mut *animation;
+        let progress = &mut *progress;
         // Objective/vehicle callbacks may defer SetWanderPath until control is
         // restored. Consume that hand-off here; otherwise a released mission
         // actor can become RANDOM_CHAR while remaining frozen in PED_IDLE.
         if ped.flags.start_wander_path_on_foot && ped.is_ped_in_control(vitality) {
             let path = i32::from(ped.path_dir);
             apply_script_ped_wander_path(ped, vitality, path, &file_loader, &mut general, now_ms);
+            progress.blocked_seconds = 0.0;
+            progress.blocked_node = None;
+        }
+
+        // A failed path lookup is not a permanent change of personality.
+        // Retry when the ped is free rather than parking a RANDOM_CHAR in IDLE.
+        if ped.ped_state == PedState::PED_IDLE
+            && ped.objective == eObjective::OBJECTIVE_NONE
+            && progress.retry_at_ms != 0
+            && now_ms >= progress.retry_at_ms
+            && ped.is_ped_in_control(vitality)
+        {
+            progress.retry_at_ms = 0;
+            apply_script_ped_wander_path(
+                ped, vitality, i32::from(ped.path_dir), &file_loader, &mut general, now_ms,
+            );
+            if ped.ped_state != PedState::PED_WANDER_PATH {
+                progress.retry_at_ms = now_ms.saturating_add(1_500);
+            }
         }
 
         if let Some(sound) =
@@ -262,16 +320,7 @@ pub(crate) fn process_ambient_ped_wander(
                     ped.flee_timer = 0;
                     ped.flags.use_ped_node_seek = false;
                     ped.next_path_node = None;
-                    ped.ped_state = if ped.last_ped_state == PedState::PED_WANDER_PATH {
-                        PedState::PED_WANDER_PATH
-                    } else {
-                        PedState::PED_IDLE
-                    };
-                    ped.move_state = if ped.ped_state == PedState::PED_WANDER_PATH {
-                        eMoveState::PEDMOVE_WALK
-                    } else {
-                        eMoveState::PEDMOVE_STILL
-                    };
+                    restore_ambient_wander_after_flee(ped);
                     ped.physical.move_speed = CVector::ZERO;
                     continue;
                 }
@@ -349,7 +398,7 @@ pub(crate) fn process_ambient_ped_wander(
                 next_position.z = ground + crate::peds::PedPlacement::PED_FEET_OFFSET;
             }
             let resolved = resolve_ped_static_motion(position, next_position, &file_loader);
-            let resolved = if world.vehicle_position_blocked(resolved, &file_loader) {
+            let resolved = if world.vehicle_position_blocked(resolved, &file_loader, &mut vehicle_candidates) {
                 position
             } else {
                 resolved
@@ -418,25 +467,33 @@ pub(crate) fn process_ambient_ped_wander(
         let position = ped.physical.entity.get_position();
         let next_node = ped.next_path_node.or_else(|| {
             let requested_dir = (ped.path_dir as i32).rem_euclid(8) as u8;
-            let (node, next_dir) = file_loader.path_find.find_next_node_wandering(
-                crate::control::PathFind::PATH_PED,
-                position,
-                ped.last_path_node,
-                requested_dir,
-                |from, to| {
-                    file_loader
-                        .world
-                        .process_line_of_sight_buildings_hit(
+            for offset in 0..8u8 {
+                let Some((node, next_dir)) = file_loader.path_find.find_next_node_wandering(
+                    crate::control::PathFind::PATH_PED,
+                    position,
+                    ped.last_path_node,
+                    (requested_dir + offset) % 8,
+                    |from, to| {
+                        file_loader.world.process_line_of_sight_buildings_hit(
                             [from.x, from.y, from.z],
                             [to.x, to.y, to.z],
                             &file_loader.model_info,
                             None,
-                        )
-                        .is_none()
-                },
-            )?;
-            ped.path_dir = next_dir as i16;
-            Some(node)
+                        ).is_none()
+                    },
+                ) else { continue };
+                // The native path search can return its current node as a
+                // fallback. It is not a destination if we are already there.
+                let same_place = file_loader.path_find.path_nodes.get(node).is_some_and(|target| {
+                    (target.pos.x - position.x).hypot(target.pos.y - position.y) < 0.75
+                });
+                if progress.blocked_node == Some(node) || same_place {
+                    continue;
+                }
+                ped.path_dir = next_dir as i16;
+                return Some(node);
+            }
+            None
         });
         let Some(next_node) = next_node else {
             bevy::log::warn_once!(
@@ -446,6 +503,7 @@ pub(crate) fn process_ambient_ped_wander(
             ped.ped_state = PedState::PED_IDLE;
             ped.move_state = eMoveState::PEDMOVE_STILL;
             ped.physical.move_speed = CVector::ZERO;
+            progress.retry_at_ms = now_ms.saturating_add(1_500);
             continue;
         };
         ped.next_path_node = Some(next_node);
@@ -463,6 +521,8 @@ pub(crate) fn process_ambient_ped_wander(
         if distance <= 0.75 {
             ped.last_path_node = Some(next_node);
             ped.next_path_node = None;
+            progress.blocked_node = None;
+            progress.blocked_seconds = 0.0;
             continue;
         }
 
@@ -510,6 +570,26 @@ pub(crate) fn process_ambient_ped_wander(
             next_position.z = ground + crate::peds::PedPlacement::PED_FEET_OFFSET;
         }
         let resolved = resolve_ped_static_motion(position, next_position, &file_loader);
+        let resolved = if world.vehicle_position_blocked(resolved, &file_loader, &mut vehicle_candidates) {
+            position
+        } else {
+            resolved
+        };
+        let actual_distance = (resolved.x - position.x).hypot(resolved.y - position.y);
+        if root_distance > 0.002 && actual_distance < root_distance * 0.25 {
+            progress.blocked_seconds += dt;
+        } else {
+            progress.blocked_seconds = 0.0;
+        }
+        if progress.blocked_seconds >= 0.8 {
+            // Try another connected sidewalk link instead of indefinitely
+            // pushing the root animation into a wall or fixed obstacle.
+            progress.blocked_node = Some(next_node);
+            progress.blocked_seconds = 0.0;
+            ped.path_dir = (ped.path_dir + 2).rem_euclid(8);
+            ped.next_path_node = None;
+            ped.last_path_node = None;
+        }
         ped.physical.entity.flags.has_hit_wall = resolved != next_position;
         ped.physical.move_speed = crate::peds::PedLocomotion::grounded_velocity_from_displacement(
             resolved - position,
@@ -521,3 +601,31 @@ pub(crate) fn process_ambient_ped_wander(
     }
 }
 
+#[cfg(test)]
+mod wander_recovery_tests {
+    use super::*;
+    use crate::peds::PedType::ePedType;
+
+    #[test]
+    fn civilian_resumes_walking_after_flee_when_previous_state_was_idle() {
+        let mut general = CGeneral::with_seed(4);
+        let mut ped = CPed::new(ePedType::PEDTYPE_CIVMALE, &mut general);
+        ped.ped_state = PedState::PED_FLEE_POS;
+        ped.last_ped_state = PedState::PED_IDLE;
+        restore_ambient_wander_after_flee(&mut ped);
+        assert_eq!(ped.ped_state, PedState::PED_IDLE);
+        assert!(ped.flags.start_wander_path_on_foot);
+    }
+
+    #[test]
+    fn returning_to_a_saved_wander_does_not_defer_a_second_path() {
+        let mut general = CGeneral::with_seed(5);
+        let mut ped = CPed::new(ePedType::PEDTYPE_CIVMALE, &mut general);
+        ped.ped_state = PedState::PED_FLEE_POS;
+        ped.last_ped_state = PedState::PED_WANDER_PATH;
+        restore_ambient_wander_after_flee(&mut ped);
+        assert_eq!(ped.ped_state, PedState::PED_WANDER_PATH);
+        assert_eq!(ped.move_state, eMoveState::PEDMOVE_WALK);
+        assert!(!ped.flags.start_wander_path_on_foot);
+    }
+}

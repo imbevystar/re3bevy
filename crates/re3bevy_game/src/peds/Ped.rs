@@ -4,7 +4,7 @@
 //! `CPed` constructor state and top-level initialise state.
 
 use crate::peds::PedLocomotion::PedLocomotion;
-use crate::peds::PedObstacle::PedObstacleAvoidance;
+use crate::peds::PedObstacle::{PedObstacleAvoidance, PedWanderProgress};
 use bevy::prelude::{Entity, Resource};
 use super::{PedAnimation::PedAnimation, PedVitality::PedVitality, PedDeath::PedDeathLifecycle};
 use re3bevy_core::core::{
@@ -1307,7 +1307,7 @@ impl CPedFlags {
 }
 
 #[derive(Debug, Clone, PartialEq, bevy::prelude::Component)]
-#[require(PedAnimation, PedVitality, PedLocomotion, PedObstacleAvoidance, PedDeathLifecycle)]
+#[require(PedAnimation, PedVitality, PedLocomotion, PedObstacleAvoidance, PedWanderProgress, PedDeathLifecycle)]
 pub struct CPed {
     pub physical: CPhysical,
     pub collision_speed: f32,

@@ -167,7 +167,7 @@ pub(super) fn flush_shadow_meshes(
         if alpha <= 0.0 {
             continue;
         }
-        let colour = if additive {
+        let colour = if additive || shadow.texture == 6 {
             Color::srgba_u8(
                 shadow.color[0],
                 shadow.color[1],
