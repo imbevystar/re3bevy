@@ -6,7 +6,7 @@
 #[allow(unused_imports)]
 use crate::entities::EntityReference::EntityReference;
 use super::Script::{
-    CRunningScript, ScriptEntityWorld, ScriptGameplayBridge, face_coord_heading_degrees,
+    CRunningScript, face_coord_heading_degrees,
     point_in_area_2d, point_in_area_3d, point_in_script_zone, remap_script_ped_model,
     script_jump_ip,
 };

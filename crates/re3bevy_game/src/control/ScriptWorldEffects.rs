@@ -1689,7 +1689,7 @@ pub fn apply_script_effects_to_world_with_streaming(
                             }
                             ScriptInvisibilityTarget::ScriptObject(handle) => {
                                 if let Some(entities) = script_entities.as_deref_mut()
-                                    && let Some(mut object) = entities.object_get_mut(handle)
+                                    && let Some(object) = entities.object_get_mut(handle)
                                 {
                                     object.object.physical.entity.flags.is_visible = visible;
                                     scripts.add_to_invisibility_swap_array(target, visible);

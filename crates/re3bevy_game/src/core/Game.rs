@@ -4,7 +4,6 @@
 //! Application startup, loading and cross-domain world lifecycle.
 //! Domain plugins own their system registrations; `GtaProcessSet` defines frame order.
 
-use crate::entities::EntityReference::EntityReference;
 use std::{io, sync::OnceLock, time::Instant};
 
 use bevy::{
@@ -276,7 +275,6 @@ pub(crate) use crate::control::CarRails::{
     join_car_with_road_system_goto_coors,
 };
 pub(crate) use crate::core::Pad::{update_gameplay_mouse_capture, update_pads_from_bevy_input};
-pub(crate) use crate::core::Fire::process_script_fires;
 pub(crate) use crate::collision::Collision::integrate_physical_matrix;
 pub(crate) use crate::control::Replay::service_replay_playback_runtime;
 pub(crate) use crate::save::MemoryCard::process_pending_pc_save_load;
@@ -3076,8 +3074,8 @@ mod physical_collision_regression_tests {
         ped.physical.entity.flags.has_collided = true;
         ped.physical.damage.piece_type = 3;
         ped.physical.damage.impulse = 12.0;
-        ped.physical.damage.entity = Some(EntityReference::World(4));
-        ped.physical.add_collision_record(EntityReference::World(9), 100);
+        ped.physical.damage.entity = Some(crate::entities::EntityReference::EntityReference::World(4));
+        ped.physical.add_collision_record(crate::entities::EntityReference::EntityReference::World(9), 100);
 
         assert!(prepare_player_physical_for_control(&mut ped));
         assert!((ped.physical.move_speed.x - 6.0).abs() < 1.0e-6);

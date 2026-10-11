@@ -22,7 +22,7 @@ use crate::{
     objects::ParticleObject::CParticleObjectRuntime,
     renderer::{Particle::{CParticle, ParticleEmitter}, Skidmarks::CSkidmarks, Timecycle::CTimeCycle},
     vehicles::{
-        DamageManager::{CDamageManager, eDoorStatus, eWheelStatus, tComponent},
+        DamageManager::{CDamageManager, eDoorStatus, eWheelStatus},
         HandlingMgr::tHandlingData,
         Vehicle::{
             CVehicle, CVehicleProcessWheelInput, CVehicleProcessWheelResult, CVehicleWheelHandling,

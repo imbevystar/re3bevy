@@ -65,18 +65,6 @@ pub(crate) struct ExplosionActorAccess<'w, 's> {
 }
 
 impl ExplosionActorAccess<'_, '_> {
-    pub(crate) fn ped_entity(&self, handle: i32) -> Option<Entity> {
-        let entity = self.index.ped(handle)?;
-        let (_, identity, _, _, _, _) = self.peds.get(entity).ok()?;
-        (identity.handle == handle).then_some(entity)
-    }
-
-    pub(crate) fn vehicle_entity(&self, handle: i32) -> Option<Entity> {
-        let entity = self.index.vehicle(handle)?;
-        let (_, identity, _, _, _) = self.vehicles.get(entity).ok()?;
-        (identity.handle == handle).then_some(entity)
-    }
-
     pub(crate) fn peds_mut(&mut self) -> impl Iterator<Item = ExplosionPedMut<'_>> {
         let index = &self.index;
         self.peds.iter_mut().filter_map(

@@ -92,14 +92,6 @@ pub(crate) fn blow_up_explosive_object_state(handle: i32, source: Option<u32>,
     object.physical.entity.flags.is_static = false;
 }
 
-pub(crate) fn bullet_hit_glass(handle: i32, point: CVector,
-    world: &mut crate::control::ScriptEntities::ScriptEntityWorld,
-    loader: &crate::core::FileLoader::CFileLoader, glass: &mut crate::renderer::Glass::CGlass,
-    general: &mut crate::core::General::CGeneral, now: u32) {
-    let Some(object) = world.objects.get_mut(&world.index, &handle) else { return; };
-    bullet_hit_glass_state(point, object.object, loader, glass, general, now);
-}
-
 /// Bullet collision operates on the live CObject without acquiring another
 /// actor owner or retaining pane state after the glass request is produced.
 pub(crate) fn bullet_hit_glass_state(point: CVector,

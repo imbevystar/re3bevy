@@ -391,7 +391,7 @@ impl CTheScripts {
                     }
                 }
                 ScriptInvisibilityTarget::ScriptObject(handle) => {
-                    if let Some(mut object) = script_entities.object_get_mut(handle) {
+                    if let Some(object) = script_entities.object_get_mut(handle) {
                         object.object.physical.entity.flags.is_visible = true;
                     }
                 }
@@ -414,7 +414,7 @@ impl CTheScripts {
             let handle = pools
                 .get_object_ref(slot)
                 .ok_or(ScriptSaveError::Invalid("saved SCM object pool slot is unavailable"))?;
-            let Some(mut object) = script_entities.object_get_mut(handle.0) else {
+            let Some(object) = script_entities.object_get_mut(handle.0) else {
                 return Err(ScriptSaveError::Invalid(
                     "saved SCM object pool slot has no restored ECS object",
                 ));

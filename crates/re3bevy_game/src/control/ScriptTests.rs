@@ -11,7 +11,6 @@ use re3bevy_formats::formats::Script::ScmFile;
 
 use crate::control::Garages::EGarageState;
 use crate::control::Pickups::PICKUP_MINE_INACTIVE;
-use crate::core::Pools::CPoolHandle;
 use crate::entities::Entity::eEntityStatus;
 use crate::modelinfo::ModelIndices::{MI_CARMINE, MI_DODO, MI_NAUTICALMINE};
 use crate::weapons::WeaponType::{WEAPONTYPE_TOTAL_INVENTORY_WEAPONS, eWeaponType};

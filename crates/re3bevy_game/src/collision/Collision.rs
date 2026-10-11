@@ -1690,8 +1690,6 @@ pub(crate) fn process_script_entity_collisions(
             if response_count == 0 {
                 continue;
             }
-            let object_slot = CPoolHandle(object_handle).index();
-            let vehicle_slot = CPoolHandle(vehicle_handle).index();
             let simple_vehicle = vehicle.physical.entity.status == eEntityStatus::STATUS_SIMPLE;
             vehicle.physical.entity.flags.has_hit_wall = true;
             vehicle.physical.add_collision_record(EntityReference::Object(object_handle), time_ms);
@@ -1926,7 +1924,6 @@ pub(crate) fn process_script_entity_collisions(
             let Some((vehicle_impulse, vehicle_piece, vehicle_normal)) = strongest_vehicle else {
                 continue;
             };
-            let object_slot = CPoolHandle(object_handle).index();
             vehicle.physical.add_collision_record(EntityReference::Object(object_handle), time_ms);
             object.physical.add_collision_record(EntityReference::Vehicle(vehicle_handle), time_ms);
             object.colliding_entity = Some(vehicle_slot);
@@ -2069,8 +2066,6 @@ pub(crate) fn process_script_entity_collisions(
             let Some((impulse_b, piece_b, normal_b)) = strongest_b else {
                 continue;
             };
-            let slot_a = CPoolHandle(handle_a).index();
-            let slot_b = CPoolHandle(handle_b).index();
             object_a.physical.entity.set_matrix(matrix_a);
             object_b.physical.entity.set_matrix(matrix_b);
             object_a.object_matrix = object_a.physical.entity.matrix;
@@ -2682,7 +2677,6 @@ pub(crate) fn process_script_entity_collisions(
                         continue;
                     }
 
-                    let object_slot = CPoolHandle(object_handle).index();
                     let Some(object_bevy_entity) = script_entities.object_entity(object_handle)
                     else {
                         continue;

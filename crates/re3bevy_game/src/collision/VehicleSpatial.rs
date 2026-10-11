@@ -69,15 +69,21 @@ impl Plugin for GtaCollisionPlugin {
             .init_resource::<super::VehiclePair::VehiclePairDiagnostics>()
             .add_systems(
                 Update,
-                crate::entities::PhysicalReferences::retire_physical_damage_references
+                (crate::entities::PhysicalReferences::retire_physical_damage_references
                     .after(GtaProcessSet::Script)
                     .before(GtaProcessSet::World),
+                crate::vehicles::retire_vehicle_damage_references
+                    .after(GtaProcessSet::Script)
+                    .before(GtaProcessSet::World)),
             )
             .add_systems(
                 Update,
-                crate::entities::PhysicalReferences::clear_physical_reference_targets
+                (crate::entities::PhysicalReferences::clear_physical_reference_targets
                     .after(GtaProcessSet::GameLogic)
                     .before(GtaProcessSet::Bridge),
+                crate::vehicles::clear_vehicle_damage_reference_targets
+                    .after(GtaProcessSet::GameLogic)
+                    .before(GtaProcessSet::Bridge)),
             )
             .add_systems(
                 Update,

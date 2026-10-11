@@ -875,7 +875,7 @@ impl ScriptEntityRuntimeAccess for ActiveScriptEntityRuntime<'_, '_, '_> {
         let target_entity = self.script_entities.vehicle_entity(target)?;
         let target_pool_index = CPoolHandle(target).index();
         if let Some(vehicle) = self.pending_vehicles.get_mut(&handle) {
-            let mut base = vehicle.base_mut();
+            let base = vehicle.base_mut();
             let result = if ram {
                 crate::control::CarAI::CCarAI::TellCarToRamOtherCar(
                     &mut base.auto_pilot,
@@ -1271,9 +1271,9 @@ impl ScriptEntityRuntimeAccess for ActiveScriptEntityRuntime<'_, '_, '_> {
         let Some(handle) = closest else {
             return Some(-1);
         };
-        if let Some(mut pending) = self.pending_objects.get_mut(&handle) {
+        if let Some(pending) = self.pending_objects.get_mut(&handle) {
             pending.object.object_created_by = MISSION_OBJECT;
-        } else if let Some(mut live) = self.script_entities.object_get_mut(handle) {
+        } else if let Some(live) = self.script_entities.object_get_mut(handle) {
             live.object.object_created_by = MISSION_OBJECT;
         } else {
             bevy::log::warn_once!(target: "re3bevy::script_object_lookup", handle,
