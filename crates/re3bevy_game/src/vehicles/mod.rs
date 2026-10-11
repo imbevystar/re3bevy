@@ -21,8 +21,9 @@ pub mod Train;
 pub mod Transmission;
 pub mod Vehicle;
 mod VehicleReferences;
-pub(crate) use VehicleReferences::retire_vehicle_damage_references;
-pub(crate) use VehicleReferences::clear_vehicle_damage_reference_targets;
+pub(crate) use VehicleReferences::{
+    clear_vehicle_damage_reference_targets, retire_vehicle_damage_references,
+};
 
 pub mod VehicleSimulationPlugin;
 pub mod VehicleConstruction;

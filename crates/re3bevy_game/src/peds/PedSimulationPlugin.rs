@@ -157,7 +157,7 @@ impl Plugin for GtaPedSimulationPlugin {
                 Update,
                 process_ambient_ped_wander
                     .after(process_script_ped_weapon_attacks)
-                    .after(crate::collision::VehicleSpatial::sync_vehicle_collision_spatial)
+                    .after(crate::collision::VehicleSpatial::sync_vehicle_collision_spatial_for_peds)
                     .in_set(GtaProcessSet::World)
                     .run_if(world_actor_processing_enabled)
                     .run_if(in_state(GtaAppState::InGame)),

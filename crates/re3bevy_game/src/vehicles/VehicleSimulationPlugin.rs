@@ -32,11 +32,11 @@ impl Plugin for GtaVehicleSimulationPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<crate::entities::EntityReference::EntityReferencesCleared>()
             .init_resource::<crate::vehicles::Automobile::AutomobilePhysicsDiagnostics>()
-            .add_systems(Update, super::VehicleReferences::retire_vehicle_damage_references
+            .add_systems(Update, super::retire_vehicle_damage_references
                 .after(GtaProcessSet::Script)
                 .before(GtaProcessSet::World)
                 .before(process_automobile_damage_lifecycle))
-            .add_systems(Update, super::VehicleReferences::clear_vehicle_damage_reference_targets
+            .add_systems(Update, super::clear_vehicle_damage_reference_targets
                 .after(GtaProcessSet::GameLogic).before(GtaProcessSet::Bridge))
             .init_resource::<crate::vehicles::VehicleConstruction::GtaSuspensionDiagnostics>()
             .add_systems(Update, crate::vehicles::VehicleConstruction::invalidate_automobile_suspension_sources

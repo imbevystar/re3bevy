@@ -5,6 +5,7 @@ use crate::{
     core::{EntitySectorIndex::EntitySectorIndex, FileLoader::CFileLoader},
     vehicles::Vehicle::VehicleCore,
 };
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use re3bevy_core::core::{GameState::GtaAppState, Schedules::GtaProcessSet};
 
@@ -38,27 +39,44 @@ impl VehicleCollisionSpatial {
     }
 }
 
-/// Always drain removal messages, including loading, restart and pause. Gameplay
-/// response is independently guarded; the index stores only Entity membership.
-pub(crate) fn sync_vehicle_collision_spatial(
-    mut spatial: ResMut<VehicleCollisionSpatial>,
-    loader: Res<CFileLoader>,
+/// Both the pedestrian and post-vehicle passes maintain the same sector index.
+/// Each has its own change/removal cursor, so the later pass also sees vehicles
+/// moved by control and physics after the pedestrian pass.
+#[derive(SystemParam)]
+pub(crate) struct VehicleCollisionMembership<'w, 's> {
+    spatial: ResMut<'w, VehicleCollisionSpatial>,
+    loader: Res<'w, CFileLoader>,
     changed: Query<
-        (Entity, &VehicleCore),
-        (
-            With<ScriptVehicleIdentity>,
-            Or<(Changed<VehicleCore>, Added<ScriptVehicleIdentity>)>,
-        ),
+        'w,
+        's,
+        (Entity, &'static VehicleCore),
+        (With<ScriptVehicleIdentity>, Or<(Changed<VehicleCore>, Added<ScriptVehicleIdentity>)>),
     >,
-    mut removed_core: RemovedComponents<VehicleCore>,
-    mut removed_identity: RemovedComponents<ScriptVehicleIdentity>,
-) {
-    for entity in removed_core.read().chain(removed_identity.read()) {
-        spatial.grid.remove(entity);
+    removed_core: RemovedComponents<'w, 's, VehicleCore>,
+    removed_identity: RemovedComponents<'w, 's, ScriptVehicleIdentity>,
+}
+
+impl VehicleCollisionMembership<'_, '_> {
+    fn sync(&mut self) {
+        for entity in self.removed_core.read().chain(self.removed_identity.read()) {
+            self.spatial.grid.remove(entity);
+        }
+        for (entity, core) in &self.changed {
+            self.spatial.refresh(entity, core, &self.loader);
+        }
     }
-    for (entity, core) in &changed {
-        spatial.refresh(entity, core, &loader);
-    }
+}
+
+/// Refresh membership for pedestrian obstacle queries before the actor control
+/// chain reaches vehicle physics; otherwise the dependency would form a cycle.
+pub(crate) fn sync_vehicle_collision_spatial_for_peds(mut membership: VehicleCollisionMembership) {
+    membership.sync();
+}
+
+/// Always drain removals, including loading, restart and pause. Collision
+/// response is guarded separately and uses the post-control vehicle positions.
+pub(crate) fn sync_vehicle_collision_spatial(mut membership: VehicleCollisionMembership) {
+    membership.sync();
 }
 
 pub(crate) struct GtaCollisionPlugin;
@@ -69,21 +87,20 @@ impl Plugin for GtaCollisionPlugin {
             .init_resource::<super::VehiclePair::VehiclePairDiagnostics>()
             .add_systems(
                 Update,
-                (crate::entities::PhysicalReferences::retire_physical_damage_references
+                crate::entities::PhysicalReferences::retire_physical_damage_references
                     .after(GtaProcessSet::Script)
                     .before(GtaProcessSet::World),
-                crate::vehicles::retire_vehicle_damage_references
-                    .after(GtaProcessSet::Script)
-                    .before(GtaProcessSet::World)),
             )
             .add_systems(
                 Update,
-                (crate::entities::PhysicalReferences::clear_physical_reference_targets
+                crate::entities::PhysicalReferences::clear_physical_reference_targets
                     .after(GtaProcessSet::GameLogic)
                     .before(GtaProcessSet::Bridge),
-                crate::vehicles::clear_vehicle_damage_reference_targets
-                    .after(GtaProcessSet::GameLogic)
-                    .before(GtaProcessSet::Bridge)),
+            )
+            .add_systems(
+                Update,
+                sync_vehicle_collision_spatial_for_peds
+                    .after(crate::peds::PedAI::process_script_ped_weapon_attacks),
             )
             .add_systems(
                 Update,
@@ -114,7 +131,65 @@ mod tests {
         },
         vehicles::{Automobile::CAutomobile, Vehicle::MISSION_VEHICLE},
     };
-    use re3bevy_core::core::General::CGeneral;
+    use re3bevy_core::core::{Coordinates::CVector, General::CGeneral};
+
+    #[test]
+    fn pedestrian_and_collision_passes_use_vehicle_positions_from_their_own_stage() {
+        fn move_vehicle_after_pedestrians(mut vehicles: Query<&mut VehicleCore>) {
+            for mut core in &mut vehicles {
+                core.physical.entity.set_position(CVector::new(200.0, 0.0, 0.0));
+            }
+        }
+
+        let mut app = App::new();
+        let mut loader = CFileLoader::new();
+        let center = CColVector::new(0.0, 0.0, 0.0);
+        loader
+            .model_info
+            .add_vehicle_model(90)
+            .clump
+            .base
+            .set_col_model(
+            CColModel::new(
+                CColSphere {
+                    center,
+                    radius: 1.0,
+                    surface: 0,
+                    piece: 0,
+                },
+                CColBox::new(center, center, 0, 0),
+                Vec::new(),
+            ),
+            true,
+        );
+        app.insert_resource(loader)
+            .init_resource::<ScriptEntityIndex>()
+            .init_resource::<VehicleCollisionSpatial>()
+            .add_systems(
+                Update,
+                (
+                    sync_vehicle_collision_spatial_for_peds,
+                    move_vehicle_after_pedestrians,
+                    sync_vehicle_collision_spatial,
+                )
+                    .chain(),
+            );
+
+        let mut random = CGeneral::with_seed(9);
+        let car = CAutomobile::new(90, MISSION_VEHICLE, 0, &mut random, None, None, false);
+        let actor = spawn_script_test_vehicle(
+            app.world_mut(),
+            ScriptVehicleEntity::Automobile { handle: 0x501, car },
+        );
+        app.update();
+
+        let mut candidates = Vec::new();
+        let grid = &app.world().resource::<VehicleCollisionSpatial>().grid;
+        assert!(grid.candidates(CVector::new(200.0, 0.0, 0.0), 3.0, &mut candidates));
+        assert!(candidates.contains(&actor), "post-control membership must include the moved car");
+        assert!(grid.candidates(CVector::ZERO, 3.0, &mut candidates));
+        assert!(!candidates.contains(&actor), "old pedestrian-pass membership must be retired");
+    }
 
     #[test]
     fn membership_retirement_continues_during_cutscene_only_world_processing() {

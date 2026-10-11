@@ -41,13 +41,13 @@ pub fn build_app() -> App {
 /// Both binaries use this function, so assets, plugins and runtime systems are
 /// compiled and executed only once per process.
 pub fn build_app_with_route(boot_route: GtaBootRoute) -> App {
-    build_app_with_route_and_visibility(boot_route, true)
+    build_app_with_route_and_visibility(boot_route, true, true)
 }
 
 /// Build the normal game runtime without presenting a desktop window. This is
 /// reserved for Bevy-internal runtime probes that drive ECS input directly.
 pub fn build_hidden_app_with_route(boot_route: GtaBootRoute) -> App {
-    build_app_with_route_and_visibility(boot_route, false)
+    build_app_with_route_and_visibility(boot_route, false, true)
 }
 
 /// Make `TRACE_CHROME` safe before Bevy's `LogPlugin` reads it.
@@ -119,12 +119,16 @@ fn prepare_chrome_trace_path() {
     unsafe { std::env::set_var("TRACE_CHROME", &chosen) };
 }
 
-fn build_app_with_route_and_visibility(boot_route: GtaBootRoute, visible: bool) -> App {
+fn build_app_with_route_and_visibility(
+    boot_route: GtaBootRoute,
+    visible: bool,
+    with_event_loop: bool,
+) -> App {
     #[cfg(feature = "profiling-chrome")]
     prepare_chrome_trace_path();
 
     let mut app = App::new();
-    let default_plugins = DefaultPlugins
+    let mut default_plugins = DefaultPlugins
         .set(WindowPlugin {
             primary_window: Some(Window {
                 title: "re3bevy".to_owned(),
@@ -161,6 +165,12 @@ fn build_app_with_route_and_visibility(boot_route: GtaBootRoute, visible: bool) 
             )),
             ..default()
         });
+
+    // Schedule-only tests must not create Winit's OS event loop on a test worker.
+    // All gameplay/render plugin system registrations are otherwise identical.
+    if !with_event_loop {
+        default_plugins = default_plugins.disable::<bevy::winit::WinitPlugin>();
+    }
 
     #[cfg(feature = "profiling-toggle")]
     let default_plugins = default_plugins.set(bevy::log::LogPlugin {
@@ -297,7 +307,21 @@ fn save_screenshot_on_f12(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::schedule::Schedules;
     use bevy::light::cluster::GlobalClusterGpuSettings;
+
+    #[test]
+    fn production_update_schedule_has_no_ordering_cycles() {
+        // Build the same plugin graph as the executable. A cargo check cannot
+        // catch conflicting before/after edges; Bevy validates them here.
+        let mut app = build_app_with_route_and_visibility(GtaBootRoute::Frontend, false, false);
+        let mut update = app
+            .world_mut()
+            .resource_mut::<Schedules>()
+            .remove(Update)
+            .expect("production Update schedule");
+        update.initialize(app.world_mut()).expect("acyclic Update schedule");
+    }
 
     #[test]
     fn gta_cluster_capacity_is_allocated_before_rendering() {
