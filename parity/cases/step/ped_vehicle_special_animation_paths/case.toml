@@ -1,0 +1,33 @@
+name = "ped_vehicle_special_animation_paths"
+domain = "ped_vehicle"
+reference = "re3"
+description = "Compare enter/exit animation selection for normal, low, bus and rear-door van automobiles."
+
+[setup]
+doors = [2, 3, 4, 5]
+profiles = ["standard", "low", "bus", "van"]
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.name",
+  "snapshots.door",
+  "snapshots.open",
+  "snapshots.get_in",
+  "snapshots.close_enter",
+  "snapshots.exit",
+  "snapshots.close_exit"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/peds/PedAI.cpp",
+  "references/re-GTA/src/vehicles/Automobile.cpp"
+]
+rust = [
+  "crates/re3bevy_game/src/core/Game.rs",
+  "crates/re3bevy_game/src/animation/PedVehicleAnimation.rs"
+]

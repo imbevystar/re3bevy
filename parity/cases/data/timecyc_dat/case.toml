@@ -1,0 +1,55 @@
+name = "timecyc_dat"
+domain = "data"
+reference = "re3"
+description = "Parse DATA/TIMECYC.DAT into CTimeCycle weather/hour records with all 40 source fields."
+asset_root_config = "config/original_gta3_path.txt"
+
+[setup]
+relative_path = "DATA/TIMECYC.DAT"
+
+[observe]
+fields = [
+  "asset_fingerprint.timecyc_dat_size",
+  "records.index",
+  "records.weather",
+  "records.hour",
+  "records.ambient",
+  "records.directional",
+  "records.sky_top",
+  "records.sky_bottom",
+  "records.sun_core",
+  "records.sun_corona",
+  "records.sun_size",
+  "records.sprite_size",
+  "records.sprite_brightness",
+  "records.shadow_strength",
+  "records.light_shadow_strength",
+  "records.tree_shadow_strength",
+  "records.far_clip",
+  "records.fog_start",
+  "records.lights_on_ground_brightness",
+  "records.low_clouds",
+  "records.fluffy_clouds_top",
+  "records.fluffy_clouds_bottom",
+  "records.blur"
+]
+
+[tolerance]
+default = 0
+sun_size = 0.000001
+sprite_size = 0.000001
+sprite_brightness = 0.000001
+far_clip = 0.000001
+fog_start = 0.000001
+lights_on_ground_brightness = 0.000001
+blur = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/renderer/Timecycle.cpp",
+  "references/re-GTA/src/renderer/Timecycle.h"
+]
+rust = [
+  "crates/re3bevy_game/src/renderer/Timecycle.rs"
+]
+

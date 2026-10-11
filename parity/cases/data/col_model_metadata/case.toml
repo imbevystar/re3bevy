@@ -1,0 +1,7 @@
+name = "col_model_metadata"
+asset_root_config = "config/original_gta3_path.txt"
+default_relative_path = "DATA/DEFAULT.DAT"
+gta3_relative_path = "DATA/GTA3.DAT"
+
+[tolerance]
+default = 0

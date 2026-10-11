@@ -1,0 +1,84 @@
+name = "timecycle_update"
+domain = "step"
+reference = "re3"
+description = "Observe CTimeCycle::Update interpolation, fog reduction, sun direction, shadow values, and motion-blur intent over deterministic state transitions."
+asset_root_config = "config/original_gta3_path.txt"
+
+[setup]
+relative_path = "DATA/TIMECYC.DAT"
+scripted_steps = 72
+
+[observe]
+fields = [
+  "index",
+  "hour",
+  "minute",
+  "old_weather",
+  "new_weather",
+  "interpolation",
+  "fog_reduction",
+  "stored_value",
+  "ambient",
+  "directional",
+  "sky_top",
+  "sky_bottom",
+  "sun_core",
+  "sun_corona",
+  "sun_size",
+  "sprite_size",
+  "sprite_brightness",
+  "shadow_strength",
+  "light_shadow_strength",
+  "tree_shadow_strength",
+  "far_clip",
+  "fog_start",
+  "lights_on_ground_brightness",
+  "low_clouds",
+  "fluffy_clouds_top",
+  "fluffy_clouds_bottom",
+  "blur",
+  "fog_colour",
+  "sun_direction",
+  "shadow_front",
+  "shadow_side",
+  "shadow_displacement",
+  "motion_blur"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+hour = 0
+minute = 0
+old_weather = 0
+new_weather = 0
+fog_reduction = 0
+stored_value = 0
+sky_top = 0
+sky_bottom = 0
+sun_core = 0
+sun_corona = 0
+shadow_strength = 0
+light_shadow_strength = 0
+tree_shadow_strength = 0
+low_clouds = 0
+fluffy_clouds_top = 0
+fluffy_clouds_bottom = 0
+fog_colour = 0
+far_clip = 0.00002
+fog_start = 0.00002
+blur = 0.00002
+motion_blur = 0.00002
+
+[references]
+cpp = [
+  "references/re-GTA/src/renderer/Timecycle.cpp",
+  "references/re-GTA/src/renderer/Timecycle.h",
+  "references/re-GTA/src/renderer/Shadows.cpp",
+  "references/re-GTA/src/renderer/Weather.h",
+  "references/re-GTA/src/core/Clock.h"
+]
+rust = [
+  "crates/re3bevy_game/src/renderer/Timecycle.rs",
+  "crates/re3bevy_game/src/renderer/Weather.rs"
+]

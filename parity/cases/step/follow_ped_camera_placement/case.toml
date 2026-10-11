@@ -1,0 +1,41 @@
+name = "follow_ped_camera_placement"
+domain = "camera"
+reference = "re3"
+description = "Observe Process_FollowPedWithMouse target translation, alpha/beta clamp, distance curve, source placement, and analytical Front preservation after deterministic LOS clipping."
+
+[setup]
+target = [811.875, -939.938, 35.75]
+states = [[-0.22, 0.0], [0.5, 1.0], [1.0, -2.5], [-2.0, 3.5]]
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.alpha",
+  "snapshots.beta",
+  "snapshots.target",
+  "snapshots.source",
+  "snapshots.front",
+  "snapshots.distance"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+alpha = 0.000001
+beta = 0.000001
+# C++ iostream prints the expanded f32 while Rust Display emits the shortest
+# round-tripping decimal; both encode the same input f32 bits.
+target = 0.00002
+source = 0.0001
+front = 0.000001
+distance = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/core/Cam.cpp",
+  "references/re-GTA/src/core/Camera.cpp"
+]
+rust = [
+  "crates/re3bevy_game/src/core/Camera.rs",
+  "crates/re3bevy_game/src/core/Game.rs"
+]

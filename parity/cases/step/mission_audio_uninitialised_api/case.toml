@@ -1,0 +1,30 @@
+name = "mission_audio_uninitialised_api"
+domain = "audio"
+reference = "re3"
+description = "Observe uninitialised mission-audio API guards: mutators are no-ops while loading-status query reports LOADED."
+
+[setup]
+initialised = false
+sample = 123
+
+[observe]
+fields = [
+  "sample",
+  "loading_field",
+  "loading_query",
+  "play",
+  "allowed",
+  "playing",
+  "is_2d",
+  "pretend_finished_pulses"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/audio/AudioLogic.cpp",
+  "references/re-GTA/src/audio/AudioManager.h"
+]
+rust = ["crates/re3bevy_game/src/audio/AudioManager.rs"]

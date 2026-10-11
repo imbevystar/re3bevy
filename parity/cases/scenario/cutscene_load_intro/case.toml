@@ -1,0 +1,63 @@
+name = "cutscene_load_intro"
+domain = "scenario"
+reference = "re3"
+asset_root_config = "config/original_gta3_path.txt"
+description = "Load INTRO entries from CUTS.DIR/CUTS.IMG and compare camera spline tables and cutscene manager state."
+
+[observe]
+fields = [
+  "archive.directory_entry_count",
+  "archive.animation_found",
+  "archive.animation_offset_sectors",
+  "archive.animation_size_sectors",
+  "archive.animation_byte_len",
+  "archive.animation_checksum",
+  "archive.camera_found",
+  "archive.camera_offset_sectors",
+  "archive.camera_size_sectors",
+  "archive.camera_byte_len",
+  "archive.camera_checksum",
+  "ifp.block_count",
+  "ifp.animation_count",
+  "ifp.sequence_count",
+  "ifp.frame_count",
+  "ifp.translated_sequence_count",
+  "ifp.first_block_name",
+  "splines.index",
+  "splines.stored_values",
+  "splines.frame_count_bits",
+  "splines.float_bits_checksum",
+  "samples.time_ms",
+  "samples.source_bits",
+  "samples.target_bits",
+  "samples.up_bits",
+  "samples.fov_bits",
+  "samples.position_along_bits",
+  "samples.finish_time_ms",
+  "manager.loaded",
+  "manager.running",
+  "manager.anim_loaded",
+  "manager.processing",
+  "manager.name",
+  "manager.association_count",
+  "manager.audio_track_id"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/animation/CutsceneMgr.cpp",
+  "references/re-GTA/src/animation/AnimManager.cpp",
+  "references/re-GTA/src/animation/AnimBlendAssocGroup.cpp",
+  "references/re-GTA/src/core/Cam.cpp",
+  "references/re-GTA/src/core/Camera.cpp",
+  "references/re-GTA/src/core/Directory.cpp"
+]
+rust = [
+  "crates/re3bevy_assets/src/assets/AnimationAssets.rs",
+  "crates/re3bevy_game/src/core/Camera.rs",
+  "crates/re3bevy_game/src/animation/AnimManager.rs",
+  "crates/re3bevy_game/src/animation/CutsceneMgr.rs"
+]

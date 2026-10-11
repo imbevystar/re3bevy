@@ -1,0 +1,39 @@
+name = "ped_car_player_fall"
+domain = "ped"
+reference = "re3"
+description = "Observe the player-specific non-lethal KillPedWithCar fall, damage, animation, timer, inherited speed and vehicle recoil path."
+
+[observe]
+fields = [
+  "fell",
+  "health",
+  "state",
+  "damage_direction",
+  "animation_id",
+  "get_up_timer",
+  "colliding_entity",
+  "ped_move",
+  "vehicle_move_force",
+]
+
+[tolerance]
+default = 0.000001
+health = 0.00001
+fell = 0
+state = 0
+damage_direction = 0
+animation_id = 0
+get_up_timer = 0
+colliding_entity = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/peds/PedFight.cpp",
+  "references/re-GTA/src/peds/Ped.cpp",
+  "references/re-GTA/src/entities/Physical.cpp",
+]
+rust = [
+  "crates/re3bevy_game/src/peds/Ped.rs",
+  "crates/re3bevy_game/src/core/Game.rs",
+  "crates/re3bevy_game/src/renderer/BevyRender.rs",
+]

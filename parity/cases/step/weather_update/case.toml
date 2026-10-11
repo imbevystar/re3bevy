@@ -1,0 +1,78 @@
+name = "weather_update"
+domain = "step"
+reference = "re3"
+description = "Observe CWeather::Update forced-rain transitions, rain ramp, lightning state, and side-effect intents from explicit timer snapshots."
+
+[setup]
+seed = 1
+milliseconds_per_game_minute = 1000
+forced_weather_type = 2
+timer_ms = [0, 10000, 59000, 60000, 61000, 70000, 119000, 120000, 121000, 180000, 181000]
+elapsed_ms = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+[observe]
+fields = [
+  "index",
+  "timer_ms",
+  "hour",
+  "minute",
+  "time_step",
+  "seed_after",
+  "weather_type_in_list",
+  "old_weather_type",
+  "new_weather_type",
+  "forced_weather_type",
+  "interpolation_value",
+  "wet_roads",
+  "rain",
+  "cloud_coverage",
+  "foggyness",
+  "rainbow",
+  "wind",
+  "lightning_flash",
+  "lightning_burst",
+  "lightning_start",
+  "lightning_flash_last_change",
+  "when_to_play_lightning_sound",
+  "lightning_duration",
+  "mm_rain_delta",
+  "mm_rain_total",
+  "lightning_sound",
+  "pad_shake",
+  "rain_intent",
+  "remove_2d_raindrops"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+timer_ms = 0
+hour = 0
+minute = 0
+seed_after = 0
+weather_type_in_list = 0
+old_weather_type = 0
+new_weather_type = 0
+forced_weather_type = 0
+lightning_flash = 0
+lightning_burst = 0
+lightning_start = 0
+lightning_flash_last_change = 0
+when_to_play_lightning_sound = 0
+lightning_duration = 0
+mm_rain_delta = 0
+mm_rain_total = 0
+remove_2d_raindrops = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/renderer/Weather.cpp",
+  "references/re-GTA/src/renderer/Weather.h",
+  "references/re-GTA/src/core/Clock.cpp",
+  "references/re-GTA/src/core/Timer.cpp",
+  "references/re-GTA/src/core/General.h"
+]
+rust = [
+  "crates/re3bevy_game/src/renderer/Weather.rs",
+  "crates/re3bevy_core/src/core/General.rs"
+]

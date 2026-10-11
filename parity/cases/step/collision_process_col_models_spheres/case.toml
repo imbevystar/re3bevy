@@ -1,0 +1,37 @@
+name = "collision_process_col_models_spheres"
+domain = "collision"
+reference = "re3"
+description = "Observe CCollision::ProcessColModels moving-sphere transform, closest contact, world-space normal and authored surface/piece propagation."
+
+[observe]
+fields = [
+  "count",
+  "contacts.index",
+  "contacts.point",
+  "contacts.normal",
+  "contacts.depth",
+  "contacts.surface_a",
+  "contacts.piece_a",
+  "contacts.surface_b",
+  "contacts.piece_b"
+]
+
+[tolerance]
+default = 0.000001
+count = 0
+index = 0
+surface_a = 0
+piece_a = 0
+surface_b = 0
+piece_b = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/collision/Collision.cpp",
+  "references/re-GTA/src/collision/Collision.h",
+  "references/re-GTA/src/collision/ColPoint.h"
+]
+rust = [
+  "crates/re3bevy_game/src/collision/Collision.rs",
+  "crates/re3bevy_game/src/collision/ColModel.rs"
+]

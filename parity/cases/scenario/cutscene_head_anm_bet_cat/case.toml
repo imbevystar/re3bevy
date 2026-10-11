@@ -1,0 +1,5 @@
+name = "cutscene_head_anm_bet_cat"
+asset_root_config = "config/original_gta3_path.txt"
+
+[tolerance]
+default = 0

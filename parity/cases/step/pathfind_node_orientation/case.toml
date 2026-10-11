@@ -1,0 +1,26 @@
+name = "pathfind_node_orientation"
+domain = "pathfind"
+reference = "re3"
+description = "Observe path-node vehicle placement heading, no-link fallback, GTA heading convention, and towards/away destination connection selection with strict tie ordering."
+
+[setup]
+node = [0.0, 0.0, 0.0]
+connections = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [-5.0, 0.0, 0.0]]
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.heading_degrees"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+heading_degrees = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/control/PathFind.cpp",
+  "references/re-GTA/src/control/PathFind.h"
+]
+rust = ["crates/re3bevy_game/src/control/PathFind.rs"]

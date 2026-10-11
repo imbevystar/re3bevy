@@ -1,0 +1,48 @@
+name = "font_layout"
+domain = "step"
+reference = "re3"
+description = "Observe CFont character sizing, string width, line wrapping, text rect, alignment flag, and alpha-fade state without screenshot comparison."
+
+[setup]
+count = 4
+
+[observe]
+fields = [
+  "index",
+  "label",
+  "style",
+  "scale_x",
+  "scale_y",
+  "proportional",
+  "justify",
+  "centre",
+  "right_justify",
+  "width_no_spaces",
+  "width_spaces",
+  "char_a",
+  "space",
+  "lines",
+  "rect_left",
+  "rect_top",
+  "rect_right",
+  "rect_bottom",
+  "color_alpha",
+  "drop_alpha"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+style = 0
+lines = 0
+color_alpha = 0
+drop_alpha = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/renderer/Font.cpp",
+  "references/re-GTA/src/renderer/Font.h"
+]
+rust = [
+  "crates/re3bevy_game/src/renderer/Font.rs"
+]

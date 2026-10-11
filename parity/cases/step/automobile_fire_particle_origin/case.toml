@@ -1,0 +1,26 @@
+name = "automobile_fire_particle_origin"
+domain = "vehicle_damage"
+reference = "re3"
+description = "Compare the engine fire/smoke origin for present and displaced bonnet states using the authored headlights dummy."
+
+[setup]
+vehicle_position = [10.0, 20.0, 3.0]
+headlights_dummy = [1.0, 2.0, 0.5]
+
+[observe]
+fields = ["snapshots.bonnet_status", "snapshots.position"]
+
+[tolerance]
+default = 0.000001
+bonnet_status = 0
+position = 0.000002
+
+[references]
+cpp = [
+  "references/re-GTA/src/vehicles/Automobile.cpp",
+  "references/re-GTA/src/modelinfo/VehicleModelInfo.cpp"
+]
+rust = [
+  "crates/re3bevy_game/src/vehicles/Automobile.rs",
+  "crates/re3bevy_game/src/core/Game.rs"
+]

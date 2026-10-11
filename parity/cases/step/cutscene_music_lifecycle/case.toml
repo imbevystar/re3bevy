@@ -1,0 +1,38 @@
+name = "cutscene_music_lifecycle"
+domain = "step"
+reference = "re3"
+description = "Compare CMusicManager commands and state across CUTSCENE mode entry, BET/JB preload-start-stop, and the special BET clear rule."
+
+[observe]
+fields = [
+  "summary.bet_track",
+  "summary.jb_track",
+  "summary.no_track",
+  "summary.snapshot_count",
+  "snapshots.label",
+  "snapshots.music_mode",
+  "snapshots.next_track",
+  "snapshots.playing_track",
+  "snapshots.saved_track_position",
+  "snapshots.commands.kind",
+  "snapshots.commands.track",
+  "snapshots.commands.volume",
+  "snapshots.commands.pan",
+  "snapshots.commands.front_end",
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/animation/CutsceneMgr.cpp",
+  "references/re-GTA/src/audio/MusicManager.cpp",
+  "references/re-GTA/src/audio/DMAudio.cpp",
+  "references/re-GTA/src/audio/audio_enums.h",
+]
+rust = [
+  "crates/re3bevy_game/src/animation/CutsceneMgr.rs",
+  "crates/re3bevy_game/src/audio/MusicManager.rs",
+  "crates/re3bevy_game/src/audio/DMAudio.rs",
+]

@@ -1,0 +1,36 @@
+name = "ped_animation_root_velocity"
+domain = "ped"
+reference = "re3"
+description = "Observe CPed::CalculateNewVelocity heading wrap/turn and animation-root delta conversion, including attack turn-rate and tiny-timestep branches."
+
+[setup]
+heading_rate_degrees = 15.0
+rotation_cur = 3.0
+rotation_dest = -3.0
+anim_move_delta = [0.12, 0.25]
+time_step = 0.5
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.attacking",
+  "snapshots.rotation_cur",
+  "snapshots.moved"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+attacking = 0
+rotation_cur = 0.000001
+moved = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/peds/Ped.cpp",
+  "references/re-GTA/src/peds/PlayerPed.cpp"
+]
+rust = [
+  "crates/re3bevy_game/src/peds/Ped.rs",
+  "crates/re3bevy_game/src/peds/PlayerPed.rs"
+]

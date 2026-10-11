@@ -1,0 +1,58 @@
+name = "weapon_dat"
+domain = "data"
+reference = "re3"
+description = "Parse DATA/WEAPON.DAT typed records before animation/fire-type runtime binding."
+asset_root_config = "config/original_gta3_path.txt"
+
+[setup]
+relative_path = "DATA/WEAPON.DAT"
+
+[observe]
+fields = [
+  "asset_fingerprint.weapon_dat_size",
+  "records.index",
+  "records.weapon_name",
+  "records.fire_type",
+  "records.range",
+  "records.firing_rate",
+  "records.reload",
+  "records.ammo_amount",
+  "records.damage",
+  "records.speed",
+  "records.radius",
+  "records.life_span",
+  "records.spread",
+  "records.fire_offset",
+  "records.anim_to_play",
+  "records.anim2_to_play",
+  "records.anim_loop_start",
+  "records.anim_loop_end",
+  "records.delay_between_anim_and_fire",
+  "records.delay_between_anim2_and_fire",
+  "records.model_id",
+  "records.flags"
+]
+
+[tolerance]
+default = 0
+range = 0.000001
+speed = 0.000001
+radius = 0.000001
+life_span = 0.000001
+spread = 0.000001
+fire_offset = 0.000001
+anim_loop_start = 0.000001
+anim_loop_end = 0.000001
+delay_between_anim_and_fire = 0.000001
+delay_between_anim2_and_fire = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/weapons/WeaponInfo.cpp",
+  "references/re-GTA/src/weapons/WeaponInfo.h",
+  "references/re-GTA/src/weapons/WeaponType.h"
+]
+rust = [
+  "crates/re3bevy_formats/src/formats/DataRead.rs"
+]
+

@@ -1,0 +1,4 @@
+name = "boot_to_frontend_state_sequence"
+
+[tolerance]
+default = 0

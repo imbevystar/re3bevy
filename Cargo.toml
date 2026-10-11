@@ -1,0 +1,191 @@
+
+[workspace]
+members = [
+    "crates/re3bevy",
+    "crates/re3bevy_assets",
+    "crates/re3bevy_core",
+    "crates/re3bevy_debug",
+    "crates/re3bevy_dev_arena",
+    "crates/re3bevy_formats",
+    "crates/re3bevy_game",
+    "parity/rust_harness",
+    "parity/scm_boot_harness",
+    "parity/world_at_spawn_harness",
+    "parity/world_systems_harness",
+    "parity/player_control_harness",
+    "parity/intro_freeroam_harness",
+    "parity/vehicle_render_harness",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+avian3d = { version = "0.7.0", default-features = false, features = ["3d", "f32"] }
+
+bevy = { version = "0.20.0", default-features = false, features = [
+    "bevy_asset",
+    "bevy_audio",
+    "bevy_core_pipeline",
+    "bevy_log",
+    "bevy_pbr",
+    "bevy_state",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_ui_widgets",
+    "bevy_winit",
+    "bmp",
+    "custom_cursor",
+    "default_font",
+    "multi_threaded",
+    "mp3",
+    "wav",
+    "png",
+    "jpeg",
+    "tonemapping_luts",
+    "ui_picking",
+    "zstd_rust",
+] }
+
+# Upstream Bevy 0.20 support, pinned until a compatible crates.io release.
+bevy_enhanced_input = { git = "https://github.com/simgine/bevy_enhanced_input", rev = "b72891d3b45f43e14ff7eaf71773853003805824" }
+
+re3bevy_assets = { path = "crates/re3bevy_assets" }
+re3bevy_core = { path = "crates/re3bevy_core" }
+re3bevy_debug = { path = "crates/re3bevy_debug" }
+re3bevy_dev_arena = { path = "crates/re3bevy_dev_arena" }
+re3bevy_formats = { path = "crates/re3bevy_formats" }
+re3bevy_game = { path = "crates/re3bevy_game" }
+
+rodio = { version = "0.22.2", default-features = false, features = [
+    "symphonia-adpcm",
+    "symphonia-pcm",
+    "symphonia-wav",
+] }
+
+
+# ============================================================================
+# DEVELOPMENT PROFILE
+# ============================================================================
+#
+# Optimize for fast edit -> compile -> run iteration.
+#
+# re3bevy_game previously had opt-level = 2, which caused extremely expensive
+# LLVM code generation. The timing report showed:
+#
+#   re3bevy_game:
+#     total:    ~122.8s
+#     frontend:  ~17.7s
+#     codegen:  ~105.1s
+#
+# Keep workspace/game code at opt-level 0 during development.
+#
+# Third-party dependencies are optimized separately below so Bevy/wgpu still
+# have usable runtime performance.
+
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+incremental = true
+codegen-units = 256
+lto = false
+
+
+# ============================================================================
+# THIRD-PARTY DEPENDENCIES
+# ============================================================================
+#
+# Bevy/wgpu and other external dependencies are expensive to run completely
+# unoptimized. They change rarely, so paying their optimization cost once is
+# worthwhile.
+#
+# Disable their debug information to reduce compilation/artifact size.
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+
+# ============================================================================
+# PROJECT HOT PATHS
+# ============================================================================
+#
+# Original GTA archives are large binary files. These crates perform parsing,
+# decoding and asset processing where completely unoptimized code can make
+# development runtime painfully slow.
+#
+# They remain optimized while the main gameplay crate stays at opt-level 0.
+
+[profile.dev.package.re3bevy_formats]
+opt-level = 3
+debug = false
+
+[profile.dev.package.re3bevy_assets]
+opt-level = 2
+debug = false
+
+# The game/renderer crate owns the per-frame ECS, collision and render hot
+# paths. Leaving it at dev opt-level 0 makes plain `cargo run -p re3bevy`
+# execute dramatically more work than the runtime/profiling builds and hides
+# real frame-pacing problems behind debug-code overhead.
+[profile.dev.package.re3bevy_game]
+opt-level = 2
+debug = false
+
+
+# ============================================================================
+# OPTIMIZED RUNTIME / PROFILING PROFILE
+# ============================================================================
+#
+# Keep the default dev profile focused on fast edit -> compile -> run cycles,
+# while providing an explicit profile for playing and profiling the real game.
+# `opt-level = 2` avoids the worst LLVM cost of a full release build while
+# removing the large runtime penalty of executing re3bevy_game at opt-level 0.
+# Line tables keep profiler stacks/symbols useful without full debug info.
+
+[profile.runtime]
+inherits = "dev"
+opt-level = 2
+debug = "line-tables-only"
+codegen-units = 64
+incremental = true
+lto = false
+
+[profile.runtime.package."*"]
+opt-level = 3
+debug = false
+
+# Sampling-profile build: preserve file/line symbols throughout Bevy and the
+# game crates so ETW/WPA can resolve full native call stacks. This profile is
+# intentionally separate from `runtime`, which stays lean for normal play.
+[profile.profiling]
+inherits = "runtime"
+debug = "full"
+
+[profile.profiling.package."*"]
+debug = "line-tables-only"
+
+[profile.profiling.package.re3bevy]
+debug = "full"
+
+[profile.profiling.package.re3bevy_game]
+debug = "full"
+
+[profile.profiling.package.re3bevy_core]
+debug = "full"
+
+[profile.profiling.package.re3bevy_assets]
+debug = "full"
+
+[profile.profiling.package.re3bevy_formats]
+debug = "full"
+
+[profile.profiling.package.re3bevy_dev_arena]
+debug = "full"
+
+[profile.profiling.package.re3bevy_debug]
+debug = "full"

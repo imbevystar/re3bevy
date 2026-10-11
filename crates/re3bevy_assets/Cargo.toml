@@ -1,0 +1,10 @@
+[package]
+name = "re3bevy_assets"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy.workspace = true
+re3bevy_core.workspace = true
+re3bevy_formats.workspace = true

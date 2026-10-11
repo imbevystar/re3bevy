@@ -1,0 +1,35 @@
+name = "plane_path_process_control"
+domain = "vehicle"
+reference = "re3"
+description = "Observe CPlane::ProcessControl rear/front/roll path sampling, matrix basis, path speed and far-distance state for Airtrain and Dead Dodo."
+
+[observe]
+fields = [
+  "updated",
+  "landing_sound",
+  "cur_node",
+  "far",
+  "speed",
+  "position",
+  "right",
+  "forward",
+  "up",
+  "move_speed",
+]
+
+[tolerance]
+default = 0.000001
+updated = 0
+landing_sound = 0
+cur_node = 0
+far = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/vehicles/Plane.cpp",
+  "references/re-GTA/src/vehicles/Plane.h",
+]
+rust = [
+  "crates/re3bevy_game/src/vehicles/Plane.rs",
+  "crates/re3bevy_game/src/core/Game.rs",
+]

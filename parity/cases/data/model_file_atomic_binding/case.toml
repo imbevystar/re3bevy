@@ -1,0 +1,44 @@
+name = "model_file_atomic_binding"
+domain = "data"
+reference = "re3"
+description = "Bind DEFAULT.DAT MODELFILE atomics to simple model slots and compare geometry ownership plus model/TXD reference state."
+asset_root_config = "config/original_gta3_path.txt"
+
+[setup]
+default_relative_path = "DATA/DEFAULT.DAT"
+
+[observe]
+fields = [
+  "asset_fingerprint.default_dat_size",
+  "asset_fingerprint.model_file_count",
+  "asset_fingerprint.binding_count",
+  "asset_fingerprint.missing_count",
+  "bindings.index",
+  "bindings.file_index",
+  "bindings.file_path",
+  "bindings.model_id",
+  "bindings.model_name",
+  "bindings.txd_name",
+  "bindings.lod_index",
+  "bindings.frame_name",
+  "bindings.geometry_index",
+  "bindings.num_vertices",
+  "bindings.num_triangles",
+  "bindings.model_ref_count",
+  "bindings.txd_ref_count",
+  "bindings.rw_object_loaded"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/core/FileLoader.cpp",
+  "references/re-GTA/src/modelinfo/SimpleModelInfo.cpp",
+  "references/re-GTA/src/modelinfo/BaseModelInfo.cpp"
+]
+rust = [
+  "crates/re3bevy_game/src/core/FileLoader.rs",
+  "crates/re3bevy_game/src/modelinfo/ModelInfo.rs"
+]

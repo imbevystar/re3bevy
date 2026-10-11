@@ -1,0 +1,38 @@
+name = "timer_update"
+domain = "step"
+reference = "re3"
+description = "Observe deterministic CTimer update math from the FIX_BUGS C++ path using explicit elapsed milliseconds."
+
+[setup]
+elapsed_ms = [16, 17, 34, 80]
+record_playback = false
+chase_recording = false
+
+[observe]
+fields = [
+  "index",
+  "elapsed_ms",
+  "time_in_milliseconds",
+  "time_in_milliseconds_pause_mode",
+  "time_in_milliseconds_non_clipped",
+  "previous_time_in_milliseconds",
+  "frame_counter",
+  "time_step",
+  "time_step_non_clipped"
+]
+
+[tolerance]
+default = 0
+elapsed_ms = 0.000001
+time_step = 0.000001
+time_step_non_clipped = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/core/Timer.cpp",
+  "references/re-GTA/src/core/Timer.h"
+]
+rust = [
+  "crates/re3bevy_core/src/core/Timer.rs"
+]
+

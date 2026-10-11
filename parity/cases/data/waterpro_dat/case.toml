@@ -1,0 +1,15 @@
+name = "waterpro_dat"
+asset_root_config = "config/original_gta3_path.txt"
+relative_path = "DATA/waterpro.dat"
+
+[tolerance]
+default = 0
+level = 0.0001
+z = 0.0001
+left = 0.0001
+bottom = 0.0001
+right = 0.0001
+top = 0.0001
+rect_level = 0.0001
+no_waves_level = 0.0001
+distance_to_water = 0.0001

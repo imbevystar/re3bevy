@@ -1,0 +1,58 @@
+plugins { id 'com.android.application' }
+
+def gameAssets = providers.gradleProperty('gameAssets').get()
+def privateGameData = providers.gradleProperty('privateGameData').orElse('false').get() == 'true'
+// Allowlist packaged assets; a normal build cannot silently bundle game data.
+def noticeNames = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'LICENSE.pl_mpeg'] as Set
+tasks.register('checkPackagedAssets') {
+    doLast {
+        def root = file(gameAssets)
+        if (!root.isDirectory()) throw new GradleException('Missing APK notice/assets directory')
+        noticeNames.each { name ->
+            if (!new File(root, name).isFile()) throw new GradleException("Missing APK notice: $name")
+        }
+        root.eachFileRecurse { entry ->
+            if (entry.isFile()) {
+                def path = root.toPath().relativize(entry.toPath()).toString().replace('\\', '/')
+                if (!noticeNames.contains(path) && !(privateGameData && (path.startsWith('gta3/') || path == 'gta3-revision'))) {
+                    throw new GradleException("Unexpected packaged asset: $path; original data requires the explicit private build option")
+                }
+            }
+        }
+    }
+}
+tasks.matching { it.name == 'preBuild' }.configureEach { dependsOn 'checkPackagedAssets' }
+
+android {
+    namespace 'org.re3bevy.game'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'org.re3bevy.game'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    sourceSets {
+        main {
+            // Normal APKs carry notices only; game data is imported on device.
+            assets.srcDirs = [gameAssets]
+            jniLibs.srcDirs = [providers.gradleProperty('nativeLibs').get()]
+        }
+    }
+    packaging { jniLibs { useLegacyPackaging = false } }
+    androidResources { noCompress += ['img','dir','raw','sdt','mp3','mpg','wav','txd','dff','ifp','col'] }
+}
+
+dependencies {
+    // Kotlin 1.8 merged the JDK extensions into stdlib; align transitive versions.
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    // Must match android-activity 0.6.1, selected by Bevy 0.20.
+    implementation 'androidx.games:games-activity:4.4.0'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+}

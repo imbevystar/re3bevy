@@ -1,0 +1,49 @@
+# Auto detect text files and perform LF normalization on checkout
+* text=auto
+
+# Source code and config files (enforce LF)
+*.rs text eol=lf
+*.wesl text eol=lf
+*.wgsl text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
+
+# Windows-specific scripts
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets and media
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.bmp binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+
+# Original GTA data formats (treat as binary if any fixtures are present)
+*.dff binary
+*.txd binary
+*.col binary
+*.dat binary
+*.ide binary
+*.ipl binary
+*.scm binary
+*.ifp binary
+
+# Reference checkouts are local evidence, not source-release contents.
+/references export-ignore
+# This reference-derived comparison harness also needs separate permissions.
+/parity/cpp_harness export-ignore
+/.gitmodules export-ignore
+/dist export-ignore
+/target export-ignore
+/config/original_gta3_path.txt export-ignore

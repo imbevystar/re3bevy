@@ -1,0 +1,15 @@
+[package]
+name = "re3bevy_world_systems_harness"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "re3bevy_world_systems_harness"
+path = "src/main.rs"
+
+[dependencies]
+bevy.workspace = true
+re3bevy_assets.workspace = true
+re3bevy_core.workspace = true
+re3bevy_game.workspace = true

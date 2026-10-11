@@ -1,0 +1,54 @@
+name = "txd_metadata"
+domain = "data"
+reference = "re3"
+description = "Parse DAT TEXDICTION TXD texture dictionary metadata like RwTexDictionaryGtaStreamRead."
+asset_root_config = "config/original_gta3_path.txt"
+
+[setup]
+default_relative_path = "DATA/DEFAULT.DAT"
+gta3_relative_path = "DATA/GTA3.DAT"
+
+[observe]
+fields = [
+  "asset_fingerprint.default_dat_size",
+  "asset_fingerprint.gta3_dat_size",
+  "asset_fingerprint.txd_file_count",
+  "asset_fingerprint.texture_count",
+  "files.index",
+  "files.path",
+  "files.size",
+  "files.num_textures",
+  "files.first_phase_textures",
+  "files.texture_native_chunks",
+  "textures.index",
+  "textures.file_index",
+  "textures.texture_index",
+  "textures.platform_id",
+  "textures.chunk_version",
+  "textures.chunk_length",
+  "textures.filter_addressing",
+  "textures.name",
+  "textures.mask",
+  "textures.raster_format",
+  "textures.d3d_format",
+  "textures.has_alpha",
+  "textures.width",
+  "textures.height",
+  "textures.depth",
+  "textures.num_levels",
+  "textures.raster_type",
+  "textures.compression_or_flags",
+  "textures.palette_len",
+  "textures.mip_level_sizes"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/rw/TexRead.cpp"
+]
+rust = [
+  "crates/re3bevy_formats/src/formats/TexRead.rs"
+]

@@ -1,0 +1,49 @@
+name = "transmission_accel"
+domain = "step"
+reference = "re3"
+description = "Observe cTransmission gear ratio setup, gear transitions, gear-change delay, boost flags, reverse acceleration, and velocity clamp behavior."
+
+[setup]
+count = 8
+
+[observe]
+fields = [
+  "index",
+  "label",
+  "number_of_gears",
+  "flags",
+  "gas_pedal",
+  "velocity",
+  "gear_before",
+  "gear_after",
+  "time_before",
+  "time_after",
+  "time_step",
+  "time_step_seconds",
+  "cheat",
+  "acceleration",
+  "cur_velocity",
+  "gear_max_velocity",
+  "gear_shift_up",
+  "gear_shift_down"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+number_of_gears = 0
+flags = 0
+gear_before = 0
+gear_after = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/vehicles/Transmission.cpp",
+  "references/re-GTA/src/vehicles/Transmission.h",
+  "references/re-GTA/src/vehicles/HandlingMgr.h",
+  "references/re-GTA/src/core/Timer.h"
+]
+rust = [
+  "crates/re3bevy_game/src/vehicles/Transmission.rs",
+  "crates/re3bevy_game/src/vehicles/Automobile.rs"
+]

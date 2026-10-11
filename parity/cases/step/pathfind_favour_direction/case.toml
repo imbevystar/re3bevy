@@ -1,0 +1,29 @@
+name = "pathfind_favour_direction"
+domain = "pathfind"
+reference = "re3"
+description = "Observe FindNodeClosestToCoorsFavourDirection vector normalization, directional dot penalty, raw-distance prefilter, car/ped ranges, and unkBits eligibility."
+
+[setup]
+origin = [0.0, 0.0, 0.0]
+directions = [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0]]
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.path_type",
+  "snapshots.direction",
+  "snapshots.result"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+path_type = 0
+result = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/control/PathFind.cpp",
+  "references/re-GTA/src/control/PathFind.h"
+]
+rust = ["crates/re3bevy_game/src/control/PathFind.rs"]

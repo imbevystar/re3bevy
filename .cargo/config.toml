@@ -1,0 +1,12 @@
+[build]
+jobs = 4
+
+[target.x86_64-pc-windows-msvc]
+linker = "scripts/dist-linker.cmd"
+
+[alias]
+c = "check --workspace"
+ca = "check --workspace --all-targets"
+r = "run -p re3bevy"
+rr = "run -p re3bevy --profile runtime"
+t = "test --workspace"

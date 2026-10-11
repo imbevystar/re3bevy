@@ -1,0 +1,38 @@
+name = "playerped_constructor_defaults"
+domain = "ped"
+reference = "re3"
+description = "Observe CPlayerPed constructor defaults before SetupPlayerPed adds it to CWorld."
+
+[observe]
+fields = [
+  "model_id",
+  "move_speed",
+  "current_stamina",
+  "max_stamina",
+  "current_weapon",
+  "selected_weapon_slot",
+  "ped_state",
+  "can_be_damaged",
+  "targettable_objects",
+  "safe_positions_zero",
+  "safe_peds_null",
+  "active_in_world"
+]
+
+[tolerance]
+default = 0
+move_speed = 0.0
+current_stamina = 0.0
+max_stamina = 0.0
+
+[references]
+cpp = [
+  "references/re-GTA/src/peds/PlayerPed.cpp",
+  "references/re-GTA/src/peds/Ped.cpp",
+  "references/re-GTA/src/core/Wanted.cpp"
+]
+rust = [
+  "crates/re3bevy_game/src/peds/PlayerPed.rs",
+  "crates/re3bevy_game/src/peds/Ped.rs",
+  "crates/re3bevy_game/src/core/Wanted.rs"
+]

@@ -1,0 +1,159 @@
+# ============================================================================
+# Rust and Native Build Outputs
+# ============================================================================
+target/
+/dist/
+/android/.gradle/
+/android/local.properties
+/android/**/build/
+*.apk
+*.aab
+/android/app/src/main/assets/gta3/
+/android/app/src/main/assets/gta3-revision
+/game-data/
+/original-game-data/
+/target_*/
+/.codex-target/
+*.rs.bk
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.rlib
+*.rmeta
+*.profraw
+*.profdata
+*.dSYM/
+
+# ============================================================================
+# Development Environment & Operating Systems
+# ============================================================================
+.vscode/
+.idea/
+.fleet/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+[Tt]humbs.db
+[Dd]esktop.ini
+ehthumbs.db
+
+# ============================================================================
+# Profiling, Logs, Crash Dumps and Runtime Captures
+# ============================================================================
+*.log
+*.dmp
+*.dump
+*.stackdump
+*.patch
+*.diff
+perf.data*
+flamegraph*.svg
+/fps.txt
+/trace*.json
+/chrome*.json
+/*profile*.json
+
+# Ad-hoc screen captures and media generated in repository root
+/*.png
+/*.jpg
+/*.jpeg
+/*.bmp
+/*.out
+/*.err
+/*.trace
+/*.jsonl
+
+# ============================================================================
+# Temporary Files and Scratch Dirs
+# ============================================================================
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+/tmp/
+/temp/
+/scratch/
+
+# Local scratch scripts
+/.codex_trace_hotspots.py
+/test_codex_lb.py
+/update_codex_config.py
+/scratch_*.py
+
+# ============================================================================
+# Node & Web Tooling (if any)
+# ============================================================================
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# ============================================================================
+# Python Virtual Environments & Caches
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Environment Variables & Local Secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# ============================================================================
+# Machine-Specific Game Paths & Configuration
+# ============================================================================
+/config/original_gta3_path.txt
+/config/*.local.*
+
+# ============================================================================
+# Generated Runtime Assets & Cache
+# ============================================================================
+/assets/cache/
+/assets/audio/
+
+# ============================================================================
+# Parity Harness Build Artifacts and Test Outputs
+# ============================================================================
+/parity/cases/**/out/
+/parity/cpp_harness/build/
+/parity/cpp_harness/out/
+/parity/**/CMakeCache.txt
+/parity/**/CMakeFiles/
+/parity/**/cmake-build-*/
+/parity/**/*.dir/
+/parity/**/x64/
+/parity/**/Debug/
+/parity/**/Release/
+
+# ============================================================================
+# AI Assistant & Local Tooling State
+# ============================================================================
+.claude/
+.grok/
+.cursor/
+.windsurf/
+.gemini/
+.antigravity/
+.antigravitycli/
+/.workbuddy-ai/
+.zvec-grep/
+/.local-git-remote/
+.empryo/
+.continue/
+*mcp_seq*.json

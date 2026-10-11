@@ -1,0 +1,43 @@
+name = "vehicle_audio_model_selection"
+domain = "vehicle_audio"
+reference = "re3"
+description = "Compare model-specific horn/engine sample selection, frequency, loop timing, reverse warning and air-brake classification."
+
+[setup]
+audio_entity = 3
+horn_timer = 1
+gas_pedal = 0.8
+gas_pedal_audio = 0.75
+velocity_change = 0.2
+max_velocity = 0.4
+current_gear = 1
+gear_shift_down_velocity = 0.05
+first_gear_shift_up_velocity = 0.15
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.model",
+  "snapshots.reverse_warning",
+  "snapshots.air_brakes",
+  "snapshots.sounds.counter",
+  "snapshots.sounds.sample",
+  "snapshots.sounds.frequency",
+  "snapshots.sounds.loop_count",
+  "snapshots.sounds.volume"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/audio/AudioLogic.cpp",
+  "references/re-GTA/src/audio/AudioSamples.h",
+  "references/re-GTA/src/audio/sampman.h"
+]
+rust = [
+  "crates/re3bevy_game/src/audio/AudioLogic.rs",
+  "crates/re3bevy_game/src/audio/AudioManager.rs",
+  "crates/re3bevy_game/src/core/Game.rs"
+]

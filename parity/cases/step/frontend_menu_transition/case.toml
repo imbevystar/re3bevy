@@ -1,0 +1,44 @@
+name = "frontend_menu_transition"
+domain = "step"
+reference = "re3"
+description = "Observe CMenuManager menu option movement, page changes, load/delete confirm flow, and unloaded new-game shortcut from scripted frontend inputs."
+
+[setup]
+# PC save slot states from re3 PCSave.h: SLOT_OK=0, SLOT_EMPTY=1, SLOT_CORRUPTED=2.
+slot_states = [0, 1, 1, 1, 1, 1, 1, 1]
+events = ["enter", "down", "enter", "down", "enter", "down", "enter", "back", "down", "enter", "down", "enter", "down", "down", "enter", "reset", "enter", "enter"]
+
+[observe]
+fields = [
+  "index",
+  "event",
+  "outcome",
+  "curr_screen",
+  "prev_screen",
+  "curr_option",
+  "curr_save_slot",
+  "menu_active",
+  "game_not_loaded",
+  "want_to_restart",
+  "entry_action",
+  "entry_key",
+  "entry_target",
+  "entry_save_slot"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/core/Frontend.cpp",
+  "references/re-GTA/src/core/Frontend.h",
+  "references/re-GTA/src/core/MenuScreensCustom.cpp",
+  "references/re-GTA/src/save/PCSave.h"
+]
+rust = [
+  "crates/re3bevy_game/src/core/Frontend.rs",
+  "crates/re3bevy_game/src/core/FrontendFlow.rs",
+  "crates/re3bevy_game/src/core/MenuScreens.rs",
+  "crates/re3bevy_game/src/core/MenuScreensCustom.rs"
+]

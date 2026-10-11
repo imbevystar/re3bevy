@@ -1,0 +1,48 @@
+name = "physical_static_object_damage"
+domain = "collision"
+reference = "re3"
+description = "Observe static CObject collision damage threshold and the 20-percent response impulse when ObjectDamage disables collision."
+
+[setup]
+mass = 100.0
+turn_mass = 200.0
+elasticity = 0.5
+move_speed = [-0.5, 0.0, 0.0]
+point = [0.0, 1.0, 0.0]
+normal = [1.0, 0.0, 0.0]
+object_uproot_limit = 100.0
+object_collision_damage_effect = 1
+object_uses_collision_after_damage = false
+
+[observe]
+fields = [
+  "applied",
+  "impulse",
+  "should_damage_object",
+  "damage_impulse",
+  "should_uproot_object",
+  "object_collision_disabled_by_damage",
+  "move_speed",
+  "turn_speed"
+]
+
+[tolerance]
+default = 0.000001
+applied = 0
+impulse = 0.000001
+should_damage_object = 0
+damage_impulse = 0.000001
+should_uproot_object = 0
+object_collision_disabled_by_damage = 0
+move_speed = 0.000001
+turn_speed = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/entities/Physical.cpp",
+  "references/re-GTA/src/objects/Object.cpp"
+]
+rust = [
+  "crates/re3bevy_game/src/entities/Physical.rs",
+  "crates/re3bevy_game/src/objects/Object.rs"
+]

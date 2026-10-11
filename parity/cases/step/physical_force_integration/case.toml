@@ -1,0 +1,32 @@
+name = "physical_force_integration"
+domain = "physical"
+reference = "re3"
+description = "Observe CPhysical move/turn impulse and one matrix/position integration step on an identity transform."
+
+[setup]
+mass = 20.0
+turn_mass = 40.0
+centre_of_mass = [0.2, -0.1, 0.3]
+position = [10.0, -5.0, 2.0]
+impulse = [4.0, -2.0, 6.0]
+point = [1.5, 0.5, -0.25]
+time_step = 0.75
+
+[observe]
+fields = ["move_speed", "turn_speed", "position", "right", "forward", "up"]
+
+[tolerance]
+default = 0.000001
+move_speed = 0.000001
+turn_speed = 0.000001
+position = 0.000001
+right = 0.000001
+forward = 0.000001
+up = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/entities/Physical.cpp",
+  "references/re-GTA/src/entities/Physical.h"
+]
+rust = ["crates/re3bevy_game/src/entities/Physical.rs"]

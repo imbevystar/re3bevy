@@ -1,0 +1,47 @@
+name = "automobile_collision_piece_damage"
+domain = "vehicle"
+reference = "re3"
+description = "Observe CAutomobile::VehicleDamage impulse gate, resistant multiplier, locked-door gate, and collision-piece dispatch into CDamageManager state."
+
+[setup]
+collision_damage_multiplier = 1.0
+pieces = ["bumper_front", "door_lf", "wing_lf", "wheel_lf"]
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.piece",
+  "snapshots.impulse",
+  "snapshots.resistant",
+  "snapshots.locked",
+  "snapshots.applied",
+  "snapshots.door0",
+  "snapshots.door2",
+  "snapshots.panel0",
+  "snapshots.panel5",
+  "snapshots.light0"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+piece = 0
+resistant = 0
+locked = 0
+applied = 0
+door0 = 0
+door2 = 0
+panel0 = 0
+panel5 = 0
+light0 = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/vehicles/Automobile.cpp",
+  "references/re-GTA/src/vehicles/Vehicle.h",
+  "references/re-GTA/src/vehicles/DamageManager.cpp"
+]
+rust = [
+  "crates/re3bevy_game/src/vehicles/Automobile.rs",
+  "crates/re3bevy_game/src/vehicles/DamageManager.rs"
+]

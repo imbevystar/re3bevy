@@ -1,0 +1,39 @@
+name = "physical_collision_alt"
+domain = "collision"
+reference = "re3"
+description = "Observe ApplyCollisionAlt impulse, off-centre angular response, and the vehicle 1.2 move-impulse multiplier against an infinite/static body."
+
+[setup]
+mass = 100.0
+turn_mass = 200.0
+elasticity = 0.5
+move_speed = [-0.5, 0.0, 0.0]
+point = [0.0, 1.0, 0.0]
+normal = [1.0, 0.0, 0.0]
+time_step = 1.0
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.vehicle",
+  "snapshots.applied",
+  "snapshots.impulse",
+  "snapshots.move_speed",
+  "snapshots.turn_speed"
+]
+
+[tolerance]
+default = 0.000001
+index = 0
+vehicle = 0
+applied = 0
+impulse = 0.000001
+move_speed = 0.000001
+turn_speed = 0.000001
+
+[references]
+cpp = [
+  "references/re-GTA/src/entities/Physical.cpp",
+  "references/re-GTA/src/entities/Physical.h"
+]
+rust = ["crates/re3bevy_game/src/entities/Physical.rs"]

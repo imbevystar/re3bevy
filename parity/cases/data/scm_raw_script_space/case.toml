@@ -1,0 +1,6 @@
+name = "scm_raw_script_space"
+asset_root_config = "config/original_gta3_path.txt"
+relative_path = "DATA/MAIN.SCM"
+
+[tolerance]
+default = 0

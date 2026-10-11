@@ -1,0 +1,82 @@
+name = "dff_geometry_metadata"
+domain = "data"
+reference = "re3"
+description = "Parse DAT MODELFILE DFF clump and geometry metadata like RpClumpGtaStreamRead1/2."
+asset_root_config = "config/original_gta3_path.txt"
+
+[setup]
+default_relative_path = "DATA/DEFAULT.DAT"
+gta3_relative_path = "DATA/GTA3.DAT"
+
+[observe]
+fields = [
+  "asset_fingerprint.default_dat_size",
+  "asset_fingerprint.gta3_dat_size",
+  "asset_fingerprint.dff_file_count",
+  "asset_fingerprint.geometry_count",
+  "asset_fingerprint.atomic_count",
+  "asset_fingerprint.mesh_count",
+  "files.index",
+  "files.path",
+  "files.size",
+  "files.num_atomics",
+  "files.num_lights",
+  "files.num_cameras",
+  "files.num_frames",
+  "files.num_geometries",
+  "files.first_phase_geometries",
+  "files.atomic_chunks",
+  "files.root_frame_name",
+  "files.mesh_count",
+  "geometries.index",
+  "geometries.file_index",
+  "geometries.geometry_index",
+  "geometries.flags",
+  "geometries.raw_flags",
+  "geometries.num_triangles",
+  "geometries.num_vertices",
+  "geometries.num_morph_targets",
+  "geometries.num_materials",
+  "geometries.num_tex_coord_sets",
+  "geometries.chunk_version",
+  "geometries.chunk_length",
+  "geometries.decoded",
+  "geometries.position_count",
+  "geometries.normal_count",
+  "geometries.prelit_color_count",
+  "geometries.tex_coord_set_count",
+  "geometries.index_count",
+  "geometries.triangle_material_count",
+  "geometries.has_bounding_sphere",
+  "atomics.index",
+  "atomics.file_index",
+  "atomics.atomic_index",
+  "atomics.frame_index",
+  "atomics.geometry_index",
+  "atomics.flags",
+  "atomics.frame_name",
+  "meshes.index",
+  "meshes.file_index",
+  "meshes.geometry_index",
+  "meshes.vertex_count",
+  "meshes.triangle_count",
+  "meshes.index_count",
+  "meshes.material_slots",
+  "meshes.has_positions",
+  "meshes.has_normals",
+  "meshes.has_prelit_colors",
+  "meshes.tex_coord_sets"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/rw/ClumpRead.cpp",
+  "references/re-GTA/src/fakerw/fake.cpp",
+  "references/re-GTA/src/fakerw/rpworld.h"
+]
+rust = [
+  "crates/re3bevy_formats/src/formats/ClumpRead.rs"
+]

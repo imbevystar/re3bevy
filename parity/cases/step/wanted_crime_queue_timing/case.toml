@@ -1,0 +1,34 @@
+name = "wanted_crime_queue_timing"
+domain = "wanted"
+reference = "re3"
+description = "Observe queued crime strict 500ms report and 10000ms expiry boundaries, police-doesnt-care scaling, integer chaos truncation, and one-shot reporting."
+
+[setup]
+crime_type = "CRIME_HIT_COP"
+crime_id = 77
+queued_at_ms = 0
+police_doesnt_care = true
+sample_times_ms = [500, 501, 10001]
+
+[observe]
+fields = [
+  "snapshots.index",
+  "snapshots.now_ms",
+  "snapshots.chaos",
+  "snapshots.level",
+  "snapshots.crime_type",
+  "snapshots.reported"
+]
+
+[tolerance]
+default = 0
+
+[references]
+cpp = [
+  "references/re-GTA/src/core/Wanted.cpp",
+  "references/re-GTA/src/core/Crime.h"
+]
+rust = [
+  "crates/re3bevy_game/src/core/Wanted.rs",
+  "crates/re3bevy_game/src/core/Crime.rs"
+]
