@@ -5,7 +5,7 @@
 <h1 align="center">re3bevy</h1>
 
 <p align="center">
-  <strong>Recreating GTA III gameplay in Rust with Bevy ECS.</strong><br>
+  <strong>GTA 3 (GTA III) in Rust: recreating Grand Theft Auto III gameplay with Bevy ECS.</strong><br>
   Drive, run and watch cutscenes in Liberty City, without the original executable.
 </p>
 
@@ -26,6 +26,8 @@
 </p>
 
 **re3bevy** is an experimental **Grand Theft Auto III reimplementation** built with [Rust](https://www.rust-lang.org/) and the [Bevy game engine](https://bevyengine.org/). It rebuilds GTA III's gameplay and runtime behavior from the ground up, with Bevy ECS managing the live game world. The assets come from **your own GTA III PC installation**.
+
+Looking for **GTA 3 Rust**, **GTA III Rust**, **Grand Theft Auto 3 in Rust** or a **GTA 3 Bevy** project? This is an unofficial, experimental rebuild of GTA III's Liberty City gameplay as a Rust game, with Windows and Android ARM64 builds.
 
 > [!NOTE]
 > **Work in progress.** The full game is not yet playable. Features are incomplete, and save/runtime compatibility between commits is not guaranteed.
@@ -134,6 +136,20 @@ Controls: on-foot and vehicle buttons use the same gameplay input as desktop. Mo
 Building an APK without game data does not resolve the separate code and dependency licensing questions below.
 
 </details>
+
+## FAQ
+
+**Is there a GTA 3 remake or reimplementation written in Rust?**
+re3bevy is an experimental attempt at one, built on the Bevy game engine. It is a work in progress and the full game is not yet playable.
+
+**Does it include GTA III's game files?**
+No. You need your own lawfully obtained GTA III PC installation. The default Android APK also contains no game data.
+
+**Which platforms does it run on?**
+Windows (via Cargo) and Android ARM64 (Android 8+, Vulkan) have development build paths.
+
+**Is it official?**
+No. It is an independent, unofficial project, not affiliated with or endorsed by Rockstar Games or Take-Two Interactive. See [License and redistribution](#license-and-redistribution).
 
 ## Reference source
 
