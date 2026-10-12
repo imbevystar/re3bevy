@@ -402,6 +402,7 @@ impl Plugin for GtaBevyRenderPlugin {
             .add_plugins(MaterialPlugin::<GtaCarLightMaterial>::default())
             .add_plugins(MaterialPlugin::<GtaMarkerMaterial>::default())
             .add_systems(OnEnter(GtaAppState::LoadingGame), marker_render::reset_marker_draws)
+            .add_systems(OnEnter(GtaAppState::LoadingGame), reset_level_render_state)
             .add_systems(OnEnter(GtaAppState::LoadingFrontend), marker_render::reset_marker_draws)
             .add_systems(OnEnter(GtaAppState::Error), marker_render::reset_marker_draws)
             .add_systems(OnEnter(GtaAppState::LoadingGame), car_light_render::reset_car_light_meshes)
@@ -421,6 +422,9 @@ impl Plugin for GtaBevyRenderPlugin {
             )
             .add_plugins((
                 crate::renderer::ParticleSprite::GtaParticleSpritePlugin,
+                crate::renderer::PostFxRender::GtaPostFxRenderPlugin,
+                crate::renderer::ScreenDropletRender::GtaScreenDropletRenderPlugin,
+                crate::renderer::NeoRender::GtaNeoRenderPlugin,
                 crate::renderer::HudBevy::radar::RadarPlugin,
                 frontend_skin::FrontendSkinRenderPlugin,
                 diagnostics::RenderDiagnosticsPlugin,
@@ -437,6 +441,14 @@ impl Plugin for GtaBevyRenderPlugin {
             )
             .add_systems(
                 Update,
+                (consume_particle_intents, update_particle_billboards)
+                    .chain()
+                    .after(crate::objects::ParticleObject::update_particle_objects)
+                    .in_set(GtaProcessSet::Particles)
+                    .run_if(in_state(GtaAppState::InGame)),
+            )
+            .add_systems(
+                Update,
                 (
                     (
                         world_model_lifecycle::consume_world_streaming_deletions,
@@ -446,7 +458,6 @@ impl Plugin for GtaBevyRenderPlugin {
                         .after(sync_runtime_entity_model_refs)
                         .after(GtaProcessSet::Audio)
                         .before(GtaProcessSet::RenderPrep),
-                    sync_renderware_frame_state.in_set(GtaProcessSet::RenderPrep),
                     sync_screen_fade.in_set(GtaProcessSet::RenderPrep),
                     sync_widescreen_borders.in_set(GtaProcessSet::RenderPrep),
                     sync_runtime_entity_model_refs
@@ -483,10 +494,13 @@ impl Plugin for GtaBevyRenderPlugin {
                         (
                             clear_immediate_meshes,
                             clear_point_lights,
+                            update_coronas_lifecycle,
                             update_explosion_and_vehicle_lights,
                             pickup_render::prepare_pickup_effects,
                             update_atmosphere_and_fx,
-                            flush_world_render_pass,
+                            // The light list is complete only after the
+                            // world 2dfx/corona and vehicle producers run.
+                            (sync_renderware_frame_state, flush_world_render_pass).chain(),
                             request_radar_sections_after_world_render.in_set(NativeRenderPreparationSet::WorldRequests),
                         )
                             .chain(),
@@ -494,11 +508,14 @@ impl Plugin for GtaBevyRenderPlugin {
                             log_render_audit.in_set(NativeRenderPreparationSet::Audit),
                             crate::renderer::Antennas::register_automobile_antennas,
                             consume_particle_intents.in_set(super::Particle::NativeParticleRenderSet::Consume),
-                            update_particle_billboards,
+                            // The developer arena uses code-pause and its own
+                            // render cadence. Production updates in Particles,
+                            // before Fires/World/PreRender emit fresh sprites.
+                            update_particle_billboards.run_if(|timer: Option<Res<CTimer>>| timer.is_some_and(|timer| timer.get_is_code_paused())),
                             crate::renderer::ParticleSprite::build_particle_sprite_frame,
+                            crate::renderer::ParticleSprite::append_corona_sprite_frame,
                             crate::renderer::ParticleSprite::append_cloud_sprite_frame,
                             flush_fluff_intents,
-                            flush_corona_billboards,
                             flush_pacman_billboards,
                             flush_cloud_billboards,
                         )
@@ -538,6 +555,60 @@ impl Plugin for GtaBevyRenderPlugin {
             );
         }
     }
+}
+
+/// CGame::ShutDownForRestart destroys the old level's RwObjects, model
+/// dictionaries and per-frame effects. A new CFileLoader starts its TXD and
+/// model generations from their initial values, so the render-side caches
+/// cannot use those generation numbers to distinguish the previous game.
+/// LOAD_SCENE within a running game still uses the recyclable slot path.
+fn reset_level_render_state(
+    mut commands: Commands,
+    mut registry: ResMut<GtaWorldMeshRegistry>,
+    mut model_assets: ResMut<GtaWorldModelAssetCache>,
+    mut texture_cache: ResMut<GtaWorldTextureCache>,
+    mut refs: ResMut<GtaRuntimeEntityModelRefs>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<GtaUnlitMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut coronas: Option<ResMut<CCoronas>>,
+    mut point_lights: ResMut<CPointLights>,
+) {
+    for slot in registry.slots.values().chain(registry.retired_slots.values()) {
+        despawn_world_mesh_slot(&mut commands, &mut materials, slot);
+    }
+    for entry in model_assets.entries.values() {
+        for material in &entry.materials {
+            materials.remove(material.id());
+        }
+    }
+    for geometry in model_assets.geometry.values() {
+        for mesh in &geometry.meshes {
+            meshes.remove(mesh.id());
+        }
+    }
+    // All handles resolved from the previous level's dictionaries must be
+    // decoded again. Their numeric slot/generation can repeat after restart.
+    for handle in texture_cache.images.values()
+        .chain(texture_cache.solid_colours.values())
+        .chain(texture_cache.player_skins.values())
+    {
+        images.remove(handle.id());
+    }
+    // Model-ref reconciliation observes this counter across game loads. Do
+    // not let the fresh registry reuse the previous run's slots epoch.
+    let next_slots_epoch = registry.slots_epoch.wrapping_add(1);
+    *registry = GtaWorldMeshRegistry::default();
+    registry.slots_epoch = next_slots_epoch;
+    *model_assets = GtaWorldModelAssetCache::default();
+    *texture_cache = GtaWorldTextureCache::default();
+    refs.owned.clear();
+    // The first boot creates CCoronas only when level loading finalises.
+    // Subsequent New Game entries can already have one from the old level.
+    if let Some(coronas) = coronas.as_deref_mut() {
+        *coronas = CCoronas::init();
+    }
+    point_lights.init_per_frame();
 }
 
 fn load_marker_parts(
@@ -1125,6 +1196,57 @@ mod render_prep_schedule_conflict_tests {
     use super::*;
     use bevy::ecs::{system::IntoSystem, world::World};
 
+    #[test]
+    fn new_game_invalidates_level_texture_generations_and_light_state() {
+        let mut app = App::new();
+        app.init_resource::<GtaWorldMeshRegistry>()
+            .init_resource::<GtaWorldModelAssetCache>()
+            .init_resource::<GtaWorldTextureCache>()
+            .init_resource::<GtaRuntimeEntityModelRefs>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<GtaUnlitMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .insert_resource(CCoronas::init())
+            .init_resource::<CPointLights>()
+            .add_systems(Update, reset_level_render_state);
+        let old_image = app.world_mut().resource_mut::<Assets<Image>>().add(Image::default());
+        {
+            let mut cache = app.world_mut().resource_mut::<GtaWorldTextureCache>();
+            cache.images.insert((2, "coronastar".to_owned()), old_image.clone());
+            cache.synced_txd_generations.insert(2, 1);
+            cache.synced_store_revision = Some(1);
+        }
+        app.world_mut().resource_mut::<GtaWorldMeshRegistry>().slots_epoch = 42;
+        app.world_mut().resource_mut::<GtaRuntimeEntityModelRefs>().owned.insert(
+            (GtaRuntimeModelRefSource::World, 11), 1432,
+        );
+        app.world_mut().resource_mut::<CCoronas>().register_corona(
+            44, 255, 200, 50, 255, CVector::ZERO, 2.0, 80.0,
+            super::super::Coronas::TYPE_NORMAL, 0, 0, 0, 0, 0.0,
+        );
+        app.world_mut().resource_mut::<CPointLights>().add_light(
+            LIGHT_POINT, CVector::ZERO, CVector::ZERO, 4.0,
+            1.0, 1.0, 0.5, 0, false, CVector::ZERO,
+        );
+
+        app.update();
+        let registry = app.world().resource::<GtaWorldMeshRegistry>();
+        assert_eq!(registry.slots_epoch, 43);
+        assert!(registry.slots.is_empty());
+        let cache = app.world().resource::<GtaWorldTextureCache>();
+        assert!(cache.images.is_empty());
+        assert!(cache.synced_txd_generations.is_empty());
+        assert!(app.world().resource::<Assets<Image>>().get(&old_image).is_none());
+        assert!(app.world().resource::<GtaRuntimeEntityModelRefs>().owned.is_empty());
+        assert!(app.world().resource::<CCoronas>().active_coronas().next().is_none());
+        assert!(app.world().resource::<CPointLights>().lights.is_empty());
+        // First boot reaches LoadingGame before finalise_game_level_loading
+        // inserts the corona pool. Reset must also work without that resource.
+        app.world_mut().remove_resource::<CCoronas>();
+        app.update();
+        assert_eq!(app.world().resource::<GtaWorldMeshRegistry>().slots_epoch, 44);
+    }
+
     /// B0001 regression: same-frame camera readers (`&Transform`) must stay
     /// disjoint from the `&mut Transform` slot writers in the same system.
     /// System init builds the combined component-access graph and panics on
@@ -1133,8 +1255,9 @@ mod render_prep_schedule_conflict_tests {
     fn camera_readers_initialize_without_query_conflicts() {
         let mut world = World::new();
         IntoSystem::into_system(sync_sky_horizon_mesh).initialize(&mut world);
+        IntoSystem::into_system(update_coronas_lifecycle).initialize(&mut world);
         IntoSystem::into_system(update_atmosphere_and_fx).initialize(&mut world);
-        IntoSystem::into_system(flush_corona_billboards).initialize(&mut world);
+        IntoSystem::into_system(crate::renderer::ParticleSprite::append_corona_sprite_frame).initialize(&mut world);
         IntoSystem::into_system(flush_pacman_billboards).initialize(&mut world);
         IntoSystem::into_system(flush_sprite_batches).initialize(&mut world);
         IntoSystem::into_system(flush_screen_droplets).initialize(&mut world);
@@ -2207,7 +2330,6 @@ pub struct GtaParticleScreenSpace;
 #[derive(Debug, Clone, Default, Resource)]
 pub struct GtaImmediateMeshCache {
     pub unit_billboard: Option<Handle<Mesh>>,
-    pub corona_entities: Vec<Entity>,
     pub cloud_entities: Vec<Entity>,
     pub pacman_entities: Vec<Entity>,
     pub render_buffer_entities: Vec<Entity>,
@@ -2537,10 +2659,23 @@ fn clear_point_lights(
     }
 }
 
+fn update_coronas_lifecycle(
+    coronas: Option<ResMut<CCoronas>>,
+    timer: Option<Res<CTimer>>,
+) {
+    if let Some(mut coronas) = coronas {
+        coronas.update_with_time_step(timer.as_deref().map_or(1.0, CTimer::time_step));
+    }
+}
+
 fn sync_renderware_frame_state(
     timecycle: Option<Res<CTimeCycle>>,
     camera: Option<Res<CCamera>>,
     postfx: Option<Res<CPostFX>>,
+    point_lights: Option<Res<CPointLights>>,
+    coronas: Option<Res<CCoronas>>,
+    weather: Option<Res<CWeather>>,
+    menu: Option<Res<CMenuManager>>,
     mut clear_color: ResMut<ClearColor>,
     mut frame_state: ResMut<GtaRenderFrameState>,
     mut lighting_buffers: ResMut<Assets<ShaderBuffer>>,
@@ -2567,6 +2702,40 @@ fn sync_renderware_frame_state(
         .and_then(|(postfx, camera)| postfx.effective_colour_filter(camera))
         .map(Vec4::from_array)
         .unwrap_or(Vec4::new(1.0, 1.0, 1.0, 0.0));
+    // re3 Lights.cpp::SetLightsWithTimeOfDayColour: local coronas can dim
+    // ambient/directional globally, lightning overrides ambient, and the
+    // display brightness preference uses distinct ambient/direct factors.
+    let lights_mult = coronas.as_deref().map_or(1.0, |c| c.lights_mult);
+    let mut ambient = Vec3::from_array(current.ambient) * lights_mult;
+    let mut directional = Vec3::from_array(current.directional) * lights_mult;
+    if weather.as_deref().is_some_and(|w| w.lightning_flash) {
+        ambient = Vec3::ONE;
+    }
+    // Lights.cpp derives the actor colour before applying the distinct
+    // display-brightness factors. Multiplying the world colour by 1.3 in
+    // the shader loses both this clamp and the actor/world distinction.
+    let mut actor_ambient = (ambient * 1.3).min(Vec3::ONE);
+    let brightness = menu.as_deref().map_or(256, |m| m.prefs_brightness);
+    if brightness > 256 {
+        let excess = brightness as f32 / 256.0 - 1.0;
+        ambient = (ambient * (1.0 + 1.8 * excess)).min(Vec3::ONE);
+        actor_ambient = (actor_ambient * (1.0 + 1.2 * excess)).min(Vec3::ONE);
+        directional = (directional * (1.0 + 1.2 * excess)).min(Vec3::ONE);
+    }
+    let mut local_light_positions = [Vec4::ZERO; 32];
+    let mut local_light_colours = [Vec4::ZERO; 32];
+    let mut local_light_directions = [Vec4::ZERO; 32];
+    let mut local_light_count = 0;
+    if let Some(lights) = point_lights.as_deref() {
+        for (index, light) in lights.lights.iter().take(32).enumerate() {
+            local_light_positions[index] = light.coors.to_bevy().extend(light.radius);
+            local_light_colours[index] = Vec4::new(
+                light.red, light.green, light.blue, f32::from(light.light_type),
+            );
+            local_light_directions[index] = light.dir.to_bevy().extend(0.0);
+            local_light_count += 1;
+        }
+    }
     if let Some(mut buffer) = lighting_buffers.get_mut(GTA_GLOBAL_LIGHTING_BUFFER.id()) {
         // RenderWare installs these lights once per frame. Keep fog in its
         // encoded D3D8 channel space; rw_unlit converts only the final RGB.
@@ -2578,10 +2747,15 @@ fn sync_renderware_frame_state(
                 current.fog_colour[2].clamp(0, 255) as f32 / 255.0,
             )
             .extend(current.fog_start),
-            ambient: Vec3::from_array(current.ambient).extend(0.0),
-            directional: Vec3::from_array(current.directional).extend(0.0),
+            ambient: ambient.extend(0.0),
+            actor_ambient: actor_ambient.extend(0.0),
+            directional: directional.extend(0.0),
             light_direction_and_far_clip: sun.extend(current.far_clip),
             postfx_blur_colour: postfx_colour,
+            local_light_positions,
+            local_light_colours,
+            local_light_directions,
+            local_light_count: Vec4::new(local_light_count as f32, 0.0, 0.0, 0.0),
         }]);
     }
     *clear_color = ClearColor(Color::srgb_u8(
@@ -4614,6 +4788,13 @@ fn register_traffic_light_display(
     }
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+struct MapObjectEffectAccess<'w, 's> {
+    index: Option<Res<'w, crate::control::ScriptEntities::ScriptEntityIndex>>,
+    objects: Query<'w, 's, &'static crate::objects::Object::CObject>,
+    loader: Option<Res<'w, CFileLoader>>,
+}
+
 fn update_atmosphere_and_fx(
     // Same-frame camera eye: Transform is written by the Camera set earlier
     // this frame; the arena fallback camera keeps GlobalTransform because it
@@ -4629,12 +4810,13 @@ fn update_atmosphere_and_fx(
     coronas: Option<ResMut<CCoronas>>,
     mut special_fx: Option<ResMut<CSpecialFX>>,
     traffic_lights: Option<Res<CTrafficLights>>,
-    file_loader: Option<Res<CFileLoader>>,
+    object_effects: MapObjectEffectAccess,
     clock: Option<Res<CClock>>,
     bridge: Option<Res<CBridge>>,
     mut point_lights: Option<ResMut<CPointLights>>,
     mut shadows: Option<ResMut<CShadows>>,
 ) {
+    let file_loader = object_effects.loader;
     // The production camera carries GtaSceneCamera.  The insert/dev arena
     // deliberately owns its own Camera3d, so retain the same SpecialFX update
     // cadence there instead of silently dropping marker intents.
@@ -4758,18 +4940,68 @@ fn update_atmosphere_and_fx(
                 .as_ref()
                 .and_then(|traffic_lights| traffic_lights.model_index);
             let camera_forward_gta = CVector::from_bevy(camera_forward);
-            for (entity_index, entity) in file_loader.world.entities.iter().enumerate() {
-                if !entity.is_visible {
-                    continue;
+            if is_night && time_ms % 1000 < 20 && std::env::var_os("RE3BEVY_FX_DIAG").is_some() {
+                for (i, e) in file_loader.world.entities.iter().enumerate().filter(|(_, e)| e.model_index == 1393) {
+                    let delta = (e.position[0] - camera_pos.x).powi(2) + (e.position[1] - camera_pos.y).powi(2);
+                    if delta < 30.0 * 30.0 {
+                        eprintln!("LAMP_DEBUG placement={i} at={:?} visible={} promoted={:?} dist={:.1}", e.position, e.is_visible, file_loader.world.ecs_lifecycle_objects.get(&i), delta.sqrt());
+                    }
                 }
-                let dx = entity.position[0] - camera_pos.x;
-                let dy = entity.position[1] - camera_pos.y;
-                let dist_sq = dx * dx + dy * dy;
-                if dist_sq > 300.0 * 300.0 {
-                    continue;
+            }
+            // re3 traverses the camera's visible sectors rather than the IPL
+            // file's insertion order. Traversing the full IPL by index lets
+            // unrelated distant/offscreen effects claim all 128 corona slots
+            // before a nearby streetlamp is even visited. Preserve one scan
+            // but process eligible effects nearest to the camera first.
+            let mut nearby_effect_entities = Vec::new();
+            nearby_effect_entities.extend(file_loader.world.entities.iter().enumerate()
+                .filter(|(_, entity)| {
+                    entity.is_visible
+                        && file_loader.model_info.get_2d_effects(entity.model_index).is_some()
+                        && (entity.position[0] - camera_pos.x).powi(2)
+                            + (entity.position[1] - camera_pos.y).powi(2) <= 300.0 * 300.0
+                })
+                .map(|(index, entity)| (index, std::borrow::Cow::Borrowed(entity))));
+            // ConvertToRealObject transfers the IPL dummy to a live CObject.
+            // The hidden placement is provenance, not the lamp's live pose or
+            // visibility. Keep its corona ID across promotion/demotion.
+            if let Some(index) = object_effects.index.as_deref() {
+                for (&world_index, &handle) in &file_loader.world.ecs_lifecycle_objects {
+                    let Some(owner) = index.object(handle) else { continue };
+                    let Ok(object) = object_effects.objects.get(owner) else { continue };
+                    let live = &object.physical.entity;
+                    if !live.flags.is_visible { continue; }
+                    let model_index = live.model_index.max(0) as usize;
+                    if traffic_light_model_index == Some(model_index) && live.flags.render_damaged { continue; }
+                    if file_loader.model_info.get_2d_effects(model_index).is_none() { continue; }
+                    let position = live.get_position();
+                    if (position.x - camera_pos.x).powi(2) + (position.y - camera_pos.y).powi(2) > 300.0 * 300.0 { continue; }
+                    let Some(placement) = file_loader.world.entities.get(world_index) else { continue };
+                    let mut effect_entity = placement.clone();
+                    effect_entity.model_index = model_index;
+                    effect_entity.position = [position.x, position.y, position.z];
+                    let matrix = &live.matrix;
+                    effect_entity.matrix_basis_override = Some([
+                        [matrix.right.x, matrix.right.y, matrix.right.z],
+                        [matrix.forward.x, matrix.forward.y, matrix.forward.z],
+                        [matrix.up.x, matrix.up.y, matrix.up.z],
+                    ]);
+                    effect_entity.is_visible = true;
+                    nearby_effect_entities.push((world_index, std::borrow::Cow::Owned(effect_entity)));
                 }
-                let Some(effects) = file_loader.model_info.get_2d_effects(entity.model_index)
-                else {
+            }
+            nearby_effect_entities.sort_unstable_by(|a, b| {
+                let distance_sq = |entity: &CWorldEntity| {
+                    (entity.position[0] - camera_pos.x).powi(2)
+                        + (entity.position[1] - camera_pos.y).powi(2)
+                };
+                distance_sq(&a.1).total_cmp(&distance_sq(&b.1))
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            for (entity_index, entity) in &nearby_effect_entities {
+                let entity_index = *entity_index;
+                let entity = entity.as_ref();
+                let Some(effects) = file_loader.model_info.get_2d_effects(entity.model_index) else {
                     continue;
                 };
                 if traffic_light_model_index == Some(entity.model_index) {
@@ -4822,7 +5054,16 @@ fn update_atmosphere_and_fx(
                         .wrapping_mul(16)
                         .wrapping_add(fx_index as u32)
                         .wrapping_add(1000);
-                    if light_on || light_flickering {
+                    // re3 CCoronas::RegisterCorona rejects lights beyond
+                    // each effect's authored 2D draw distance *before*
+                    // reserving any of the 128 global corona slots. Without
+                    // this gate, distant lamps exhaust the pool ahead of the
+                    // visible streetlights around the camera.
+                    let delta_x = world_pos.x - camera_pos.x;
+                    let delta_y = world_pos.y - camera_pos.y;
+                    let corona_in_range = delta_x * delta_x + delta_y * delta_y
+                        < light.dist * light.dist;
+                    if (light_on || light_flickering) && corona_in_range {
                         let rgb = if light_on {
                             effect.color
                         } else {
@@ -4844,6 +5085,10 @@ fn update_atmosphere_and_fx(
                             super::Coronas::STREAK_OFF,
                             0.0,
                         );
+                    }
+                    if is_night && entity.model_index == 1393 && delta_x * delta_x + delta_y * delta_y < 900.0 && time_ms % 1000 < 20 && std::env::var_os("RE3BEVY_FX_DIAG").is_some() {
+                        let registered = coronas.coronas.iter().find(|c| c.id == corona_id);
+                        eprintln!("LAMP_DEBUG fx entity={} fx={} on={} flickering={} world={:?} in_range={} registered={:?}", entity_index, fx_index, light_on, light_flickering, world_pos, corona_in_range, registered.map(|c| (c.fade_alpha, c.off_screen, c.registered_this_frame)));
                     }
 
                     if let Some(ref mut pl) = point_lights {
@@ -4927,7 +5172,6 @@ fn update_atmosphere_and_fx(
                 }
             }
         }
-        coronas.update();
     }
     if let Some(special_fx) = special_fx.as_deref_mut() {
         special_fx.update(time_ms);
@@ -7098,111 +7342,6 @@ fn vehicle_colour_remap_from_indices(
     }
 }
 
-fn flush_corona_billboards(
-    coronas: Option<Res<CCoronas>>,
-    weather: Option<Res<super::Weather::CWeather>>,
-    // Same-frame camera rotation (see sync_sky_horizon_mesh). Without<> keeps
-    // this disjoint from the &mut Transform slot writer below.
-    camera_query: Query<&Transform, (With<GtaSceneCamera>, Without<GtaPersistentImmediate>)>,
-    texture_cache: Res<GtaWorldTextureCache>,
-    file_loader: Option<Res<CFileLoader>>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut immediate_cache: ResMut<GtaImmediateMeshCache>,
-    mut persistent_query: PersistentBillboardQuery,
-) {
-    let Some(coronas) = coronas else {
-        hide_persistent_billboard_slots(&immediate_cache.corona_entities, 0, &mut persistent_query);
-        return;
-    };
-    let Some(camera_transform) = camera_query.iter().next() else {
-        hide_persistent_billboard_slots(&immediate_cache.corona_entities, 0, &mut persistent_query);
-        return;
-    };
-    let camera_rotation = camera_transform.rotation;
-    let camera_position = camera_transform.translation;
-    let camera_forward = *camera_transform.forward();
-    let foggyness = weather.as_ref().map_or(0.0, |weather| weather.foggyness);
-    let particle_slot = file_loader
-        .as_ref()
-        .and_then(|fl| fl.txd_store.find_txd_slot("particle"));
-    let billboard_mesh = unit_billboard_mesh_handle(&mut immediate_cache, &mut meshes);
-    let mut active_count = 0;
-    for corona in coronas.active_coronas() {
-        let world = corona.coors.to_bevy();
-        let view_depth = (world - camera_position).dot(camera_forward);
-        if view_depth <= 1.0 || view_depth >= corona.draw_dist {
-            continue;
-        }
-        let fade_distance = corona.draw_dist * 0.5;
-        let distance_fade = if view_depth < fade_distance {
-            1.0
-        } else {
-            1.0 - (view_depth - fade_distance) / fade_distance.max(f32::EPSILON)
-        }
-        .clamp(0.0, 1.0);
-        let fog_scale = 1.0 + foggyness * view_depth.min(40.0) / 40.0;
-        let alpha = (f32::from(corona.fade_alpha) * distance_fade)
-            .round()
-            .clamp(0.0, 255.0) as u8;
-        if alpha == 0 {
-            continue;
-        }
-        let tex_name = coronas.texture_name_for_type(corona.texture_type);
-        let texture = particle_slot.and_then(|slot| {
-            texture_cache
-                .images
-                .get(&(slot, tex_name.to_ascii_lowercase()))
-                .cloned()
-        });
-        let colour = Color::srgba_u8(
-            (f32::from(corona.red) / fog_scale)
-                .round()
-                .clamp(0.0, 255.0) as u8,
-            (f32::from(corona.green) / fog_scale)
-                .round()
-                .clamp(0.0, 255.0) as u8,
-            (f32::from(corona.blue) / fog_scale)
-                .round()
-                .clamp(0.0, 255.0) as u8,
-            alpha,
-        );
-        let size = corona.size.max(0.05);
-        let scale = if corona.texture_type == super::Coronas::TYPE_STREAK {
-            let f = 1.0 - corona.some_angle * 2.0 / std::f32::consts::PI;
-            let w_scale = 6.0 * f.powi(8) + 0.5;
-            let h_scale = (0.35 - (w_scale - 0.5) * 0.06).max(0.15);
-            Vec3::new(size * fog_scale * w_scale, size * fog_scale * h_scale, 1.0)
-        } else {
-            Vec3::splat(size * fog_scale)
-        };
-        let transform = Transform::from_translation(world)
-            .with_rotation(camera_rotation)
-            .with_scale(scale);
-        let entity = update_persistent_billboard_slot(
-            immediate_cache.corona_entities.get(active_count).copied(),
-            transform,
-            gta_billboard_material(colour, texture, true),
-            &billboard_mesh,
-            &mut persistent_query,
-            &mut materials,
-            &mut commands,
-        );
-        if let Some(slot) = immediate_cache.corona_entities.get_mut(active_count) {
-            *slot = entity;
-        } else {
-            immediate_cache.corona_entities.push(entity);
-        }
-        active_count += 1;
-    }
-    hide_persistent_billboard_slots(
-        &immediate_cache.corona_entities,
-        active_count,
-        &mut persistent_query,
-    );
-}
-
 /// re3 `CPacManPickups::Render`: particle TXD corona texture six, additive
 /// colour (100, 50, 5), a 1024 ms horizontal sine pulse, and a 100-unit
 /// camera-depth cutoff.
@@ -8596,10 +8735,22 @@ fn ensure_world_mesh_for_entity(
                         } else {
                             Visibility::Hidden
                         };
-                        for (bevy_entity, material) in entities.iter().zip(refreshed.iter()) {
+                        let recipes = model_assets.geometry.get(&geom_key)
+                            .map(|geometry| &geometry.recipes);
+                        for (index, (bevy_entity, material)) in entities.iter().zip(refreshed.iter()).enumerate() {
                             commands
                                 .entity(*bevy_entity)
                                 .insert(MeshMaterial3d(material.clone()));
+                            // Refresh MatFX DUAL / optional Neo texture handles
+                            // when the GTA TXD dictionary is reloaded, without
+                            // re-decoding or reallocating the resident mesh.
+                            if let Some(recipe) = recipes.and_then(|recipes| recipes.get(index)) {
+                                commands.entity(*bevy_entity).insert(
+                                    crate::renderer::NeoRender::surface_for_drawable(
+                                        recipe, file_loader, texture_cache,
+                                    ),
+                                );
+                            }
                             if is_dynamic {
                                 if let Ok(mut slot_transform) =
                                     transform_query.get_mut(*bevy_entity)
@@ -8758,10 +8909,18 @@ fn ensure_world_mesh_for_entity(
     };
     let base_materials = assets.materials.clone();
     let mut bevy_entities = Vec::with_capacity(assets.meshes.len());
-    for (mesh, material) in assets.meshes.iter().zip(&assets.materials) {
+    let recipes = model_assets.geometry.get(&geom_key).map(|geometry| &geometry.recipes);
+    for (index, (mesh, material)) in assets.meshes.iter().zip(&assets.materials).enumerate() {
+        let neo_surface = recipes
+            .and_then(|recipes| recipes.get(index))
+            .map(|recipe| crate::renderer::NeoRender::surface_for_drawable(
+                recipe, file_loader, texture_cache,
+            ))
+            .unwrap_or_default();
         let id = commands
             .spawn((
                 GtaWorldMesh { entity_index, pass },
+                neo_surface,
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material.clone()),
                 // C++ `CRenderer::ScanSectorList`/`CEntity::IsVisible` has
@@ -9402,6 +9561,9 @@ fn report_fx_runtime_diagnostics(
     skidmarks: Option<Res<CSkidmarks>>,
     file_loader: Option<Res<CFileLoader>>,
     texture_cache: Res<GtaWorldTextureCache>,
+    clock: Option<Res<CClock>>,
+    point_lights: Option<Res<CPointLights>>,
+    coronas: Option<Res<CCoronas>>,
 ) {
     if !fx_runtime_diagnostics_enabled() {
         return;
@@ -9462,6 +9624,57 @@ fn report_fx_runtime_diagnostics(
         has_texture("particleskid"),
         has_texture("cloud1"),
         has_texture("cloudmasked"),
+    );
+    let (near_streetlamps, visible_lamps, registered_lamp_coronas, lamp_samples) = file_loader.as_ref().map_or((0, 0, 0, Vec::new()), |loader| {
+        let cam = loader.renderer.camera_position;
+        let mut near = 0;
+        let mut visible = 0;
+        let mut registered = 0;
+        let mut samples = Vec::new();
+        for (entity_index, ent) in loader.world.entities.iter().enumerate() {
+            if !(1342..=1404).contains(&ent.model_index)
+                || (ent.position[0] - cam.x).abs() >= 100.0
+                || (ent.position[1] - cam.y).abs() >= 100.0
+            {
+                continue;
+            }
+            let Some(effects) = loader.model_info.get_2d_effects(ent.model_index) else { continue };
+            near += 1;
+            if !ent.is_visible { continue }
+            visible += 1;
+            for (fx_index, effect) in effects.iter().enumerate() {
+                if samples.len() < 5 {
+                    let pos = entity_world_point(ent, effect.position);
+                    let dx = pos[0] - cam.x;
+                    let dy = pos[1] - cam.y;
+                    samples.push(format!("{} fx={} type={} light={:?} d={:.1}",
+                        ent.model_index, fx_index, effect.effect_type,
+                        effect.light.as_ref().map(|l| (l.light_type, l.dist, l.range)),
+                        (dx * dx + dy * dy).sqrt()));
+                }
+                let id = (entity_index as u32).wrapping_mul(16).wrapping_add(fx_index as u32).wrapping_add(1000);
+                if coronas.as_ref().is_some_and(|lights| lights.coronas.iter().any(|c| c.id == id && c.fade_alpha > 0)) {
+                    registered += 1;
+                }
+            }
+        }
+        (near, visible, registered, samples)
+    });
+    let particle_corona_texture = particle_slot.map_or(false, |slot| {
+        texture_cache.images.contains_key(&(slot, "coronastar".to_owned()))
+    });
+    eprintln!(
+        "LIGHT_DIAG hour={:?} near_streetlamps={} visible_lamps={} registered_lamp_coronas={} world_2dfx={} point_lights={} coronas={} corona_texture={} camera={:?} lamp_samples={:?}",
+        clock.as_ref().map(|clock| clock.hours()),
+        near_streetlamps,
+        visible_lamps,
+        registered_lamp_coronas,
+        file_loader.as_ref().map_or(0, |loader| loader.model_info.two_d_effects.len()),
+        point_lights.as_ref().map_or(0, |lights| lights.lights.len()),
+        coronas.as_ref().map_or(0, |lights| lights.active_coronas().count()),
+        particle_corona_texture,
+        file_loader.as_ref().map(|loader| loader.renderer.camera_position),
+        lamp_samples,
     );
 }
 
@@ -9801,50 +10014,23 @@ fn flush_mblur_intents(mblur: Option<ResMut<CMBlur>>) {
 
 fn flush_screen_droplets(
     droplets: Option<ResMut<ScreenDroplets>>,
-    mut commands: Commands,
-    // Same-frame camera eye (see sync_sky_horizon_mesh). viewport quads go
-    // through viewport_to_world, so rebuild GlobalTransform from it.
-    // Without<> keeps this disjoint from the &mut Transform slot writer below.
-    camera_query: Query<
-        (&Camera, &Transform),
-        (With<GtaSceneCamera>, Without<GtaPersistentImmediate>),
-    >,
+    mut frame: ResMut<super::ScreenDropletRender::GtaScreenDropletFrame>,
+    camera_query: Query<(&Transform, &GtaSceneCamera)>,
     window_query: Query<&Window, With<PrimaryWindow>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut immediate_cache: ResMut<GtaImmediateMeshCache>,
-    mut persistent_query: PersistentBillboardQuery,
 ) {
+    frame.clear();
     let Some(mut droplets) = droplets else {
-        hide_persistent_billboard_slots(
-            &immediate_cache.droplet_entities,
-            0,
-            &mut persistent_query,
-        );
         return;
     };
     if !droplets.enabled || !droplets.initialised {
-        hide_persistent_billboard_slots(
-            &immediate_cache.droplet_entities,
-            0,
-            &mut persistent_query,
-        );
         return;
     }
-    let Some((camera, camera_transform)) = camera_query.iter().next() else {
-        hide_persistent_billboard_slots(
-            &immediate_cache.droplet_entities,
-            0,
-            &mut persistent_query,
-        );
+    let Some((camera_transform, _)) = camera_query
+        .iter()
+        .find(|(_, scene)| scene.local_player == 0) else {
         return;
     };
     let Some(window) = window_query.iter().next() else {
-        hide_persistent_billboard_slots(
-            &immediate_cache.droplet_entities,
-            0,
-            &mut persistent_query,
-        );
         return;
     };
 
@@ -9859,66 +10045,12 @@ fn flush_screen_droplets(
     );
     droplets.process();
     droplets.render();
-    let scale_x = window.width() / 640.0;
-    let mut active_count = 0;
+    let viewport = Vec2::new(window.width(), window.height());
     for drop_index in droplets.render_list.iter().copied() {
-        let Some(drop) = droplets.drops.get(drop_index).copied() else {
-            continue;
-        };
-        if !drop.active {
-            continue;
+        if let Some(drop) = droplets.drops.get(drop_index) {
+            frame.append(drop, viewport);
         }
-        let scale = 0.5 * drop.size * scale_x;
-        let Some(mesh) = build_screen_quad_mesh(
-            [
-                drop.x - scale,
-                drop.y - scale,
-                drop.x + scale,
-                drop.y + scale,
-            ],
-            [
-                drop.color.red,
-                drop.color.green,
-                drop.color.blue,
-                drop.color.alpha,
-            ],
-            0.1,
-            camera,
-            &GlobalTransform::from(*camera_transform),
-        ) else {
-            continue;
-        };
-        let entity = update_persistent_mesh_slot(
-            immediate_cache.droplet_entities.get(active_count).copied(),
-            mesh,
-            StandardMaterial {
-                base_color: Color::WHITE,
-                alpha_mode: AlphaMode::Blend,
-                unlit: true,
-                ..default()
-            },
-            Transform::default(),
-            &mut persistent_query,
-            &mut meshes,
-            &mut materials,
-            &mut commands,
-        );
-        commands.entity(entity).insert(GtaScreenDropletMesh {
-            drop_index,
-            magnification: drop.magnification,
-        });
-        if let Some(slot) = immediate_cache.droplet_entities.get_mut(active_count) {
-            *slot = entity;
-        } else {
-            immediate_cache.droplet_entities.push(entity);
-        }
-        active_count += 1;
     }
-    hide_persistent_billboard_slots(
-        &immediate_cache.droplet_entities,
-        active_count,
-        &mut persistent_query,
-    );
 }
 
 fn flush_point_lights(
@@ -10273,53 +10405,6 @@ fn build_sprite_mesh(
     )
 }
 
-fn build_screen_quad_mesh(
-    rect: [f32; 4],
-    colour: [u8; 4],
-    depth: f32,
-
-    camera: &Camera,
-    camera_transform: &GlobalTransform,
-) -> Option<Mesh> {
-    let corners = [
-        ([rect[0], rect[1]], [0.0, 0.0]),
-        ([rect[0], rect[3]], [0.0, 1.0]),
-        ([rect[2], rect[3]], [1.0, 1.0]),
-        ([rect[0], rect[1]], [0.0, 0.0]),
-        ([rect[2], rect[3]], [1.0, 1.0]),
-        ([rect[2], rect[1]], [1.0, 0.0]),
-    ];
-    let mut positions = Vec::with_capacity(corners.len());
-    let mut uvs = Vec::with_capacity(corners.len());
-    for (screen, uv) in corners {
-        let Ok(ray) = camera.viewport_to_world(camera_transform, Vec2::new(screen[0], screen[1]))
-        else {
-            continue;
-        };
-        positions.push(ray.get_point(depth.max(0.1)).to_array());
-        uvs.push(uv);
-    }
-    if positions.len() < 3 {
-        return None;
-    }
-    Some(
-        Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions.clone())
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_NORMAL,
-            vec![[0.0, 0.0, 1.0]; positions.len()],
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_COLOR,
-            vec![rgba_u8_to_f32(colour); positions.len()],
-        ),
-    )
-}
-
 fn build_unit_billboard_mesh() -> Mesh {
     Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -10497,6 +10582,55 @@ mod world_render_candidate_tests {
         RW_PLATFORM_D3D8, RwTexDictionarySummary, RwTextureNativeDescriptor,
     };
 
+    #[test]
+    fn promoted_lamp_effects_follow_live_object_and_retire_with_identity() {
+        use crate::control::ScriptEntities::ScriptEntityIndex;
+        use crate::objects::Object::CObject;
+        use re3bevy_formats::formats::FileLoader::GtaTwoDfxLight;
+        let mut app = App::new();
+        let mut loader = CFileLoader::default();
+        let mut placement = world_entity([100.0, 100.0, 0.0], false);
+        placement.model_index = 724;
+        placement.is_visible = false;
+        loader.world.entities.push(placement);
+        loader.world.ecs_lifecycle_objects.insert(0, 0x501);
+        loader.model_info.add_2d_effect(GtaTwoDfx {
+            id: 724, position: [0.0, 0.0, 5.0], color: [255, 220, 120, 255],
+            effect_type: 0, raw: String::new(),
+            light: Some(GtaTwoDfxLight {
+                dist: 80.0, range: 10.0, size: 1.0, shadow_size: 0.0,
+                shadow_intensity: 0, light_type: 0, road_reflection: 0,
+                flare_type: 0, flags: 0, corona: "corona".into(), shadow: String::new(),
+            }),
+        });
+        let mut timecycle = super::super::Timecycle::empty_timecycle();
+        timecycle.current.sprite_brightness = 1.0;
+        let mut clock = CClock::default();
+        clock.set_game_clock(22, 0, 0);
+        app.insert_resource(loader).insert_resource(timecycle).insert_resource(clock)
+            .insert_resource(CCoronas::init()).init_resource::<CPointLights>()
+            .init_resource::<ScriptEntityIndex>()
+            .add_systems(Update, (update_coronas_lifecycle, update_atmosphere_and_fx).chain());
+        app.world_mut().spawn((GtaSceneCamera { local_player: 0 }, Transform::default()));
+        let mut object = CObject::new_with_model(724, false, &mut CGeneral::with_seed(1));
+        object.physical.entity.set_position(CVector::new(2.0, 3.0, 0.0));
+        let owner = app.world_mut().spawn(object).id();
+        app.world_mut().resource_mut::<ScriptEntityIndex>().objects.insert(0x501, owner);
+        app.update();
+        let lights = app.world().resource::<CPointLights>();
+        assert_eq!(lights.lights.len(), 1);
+        assert_eq!(lights.lights[0].coors, CVector::new(2.0, 3.0, 5.0));
+        assert!(app.world().resource::<CCoronas>().coronas.iter().any(|c| c.id == 1000));
+        app.world_mut().get_mut::<CObject>(owner).unwrap().physical.entity.flags.is_visible = false;
+        app.world_mut().resource_mut::<CPointLights>().init_per_frame();
+        app.update();
+        assert!(app.world().resource::<CPointLights>().lights.is_empty());
+        app.world_mut().get_mut::<CObject>(owner).unwrap().physical.entity.flags.is_visible = true;
+        app.world_mut().resource_mut::<ScriptEntityIndex>().objects.remove(&0x501);
+        app.update();
+        assert!(app.world().resource::<CPointLights>().lights.is_empty());
+    }
+
     fn dummy_world_material_recipe() -> ModelMaterialDrawable {
         ModelMaterialDrawable {
             mesh: Mesh::new(
@@ -10505,6 +10639,7 @@ mod world_render_candidate_tests {
             ),
             base_color: Color::WHITE,
             texture_name: None,
+            dual_texture_name: None,
             texture_model_index: 0,
             texture_txd_slot: None,
             vertex_count: 0,
@@ -11539,6 +11674,7 @@ mod world_render_candidate_tests {
             ),
             base_color: Color::WHITE,
             texture_name: Some("road".to_owned()),
+            dual_texture_name: None,
             texture_model_index: model_index,
             texture_txd_slot: None,
             vertex_count: 0,

@@ -158,7 +158,7 @@ Development uses optional local reverse-engineering references:
 - [Jai-JAP/re-GTA](https://github.com/Jai-JAP/re-GTA): GTA III behaviour reference.
 - [mrxenginner/reVC](https://github.com/mrxenginner/reVC): Vice City-era cross-reference.
 
-The Rust build does not need these trees and does not link their C++ source. Do not include them in a public source archive. Their availability online does not establish redistribution permission. Source comments retain reference attribution, and the licensing questions also concern portions already translated into Rust or the parity harness. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The Rust build does not need these trees and does not link their C++ source. Do not include them in a public source archive. Their availability online does not establish redistribution permission. Source comments retain reference attribution, and the licensing questions also concern portions already translated into Rust. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Contributing
 
@@ -175,7 +175,7 @@ A new Git repository must contain only the reviewed source snapshot, preserve th
 python scripts/check-source-distribution.py --export dist/source/re3bevy
 ```
 
-The destination must be new. The export omits Git metadata, reference checkouts and the optional C++ parity harness, whose reference-derived code needs separate permissions. Rust harnesses and synthetic fixtures are retained. The export does not initialize a repository or upload anything.
+The destination must be new. The export omits Git metadata and reference checkouts. The export does not initialize a repository or upload anything.
 
 </details>
 

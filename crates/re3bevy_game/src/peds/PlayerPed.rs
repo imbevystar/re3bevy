@@ -1953,6 +1953,7 @@ pub fn update_player_movement_animation(
 #[derive(SystemParam)]
 pub(crate) struct PlayerControlFrame<'w> {
     pads: Res<'w, CPads>,
+    cursor_capture: Option<Res<'w, crate::core::Game::GameplayCursorCapture>>,
     vehicle_spatial: Res<'w, crate::collision::VehicleSpatial::VehicleCollisionSpatial>,
     cheats: Option<Res<'w, crate::core::Cheats::CCheatState>>,
     bridge_state: Option<Res<'w, CBridge>>,
@@ -2036,6 +2037,7 @@ pub(crate) fn update_player_on_foot_control(
     let (mut particles, particle_systems) = particle_inputs;
     let PlayerControlFrame {
         pads,
+        cursor_capture,
         vehicle_spatial,
         cheats,
         bridge_state,
@@ -2391,6 +2393,13 @@ pub(crate) fn update_player_on_foot_control(
                     CAutomobileDriveStepInput {
                         control: CAutomobileControlInput {
                             steering_left_right: pad.get_steering_left_right() as f32,
+                            mouse_x: gameplay_input.mouse_look.x,
+                            mouse_steering: !cfg!(target_os = "android")
+                                && cursor_capture.as_ref().is_some_and(|capture| capture.captured)
+                                && menu.as_ref().is_some_and(|menu| {
+                                    menu.control_method == CONTROL_STANDARD
+                                        && !menu.disable_mouse_steering
+                                }),
                             accelerate: pad.get_accelerate() as f32,
                             brake: pad.get_brake() as f32,
                             handbrake: pad.get_hand_brake() != 0,

@@ -2,7 +2,7 @@
 use super::*;
 use crate::renderer::{
     RendererMaterials::{GTA_GLOBAL_LIGHTING_BUFFER, GtaUnlitUniforms},
-    Shadows::{ShadowProjectionDiagnostics, project_additive_shadow, CarLightShadowIntent},
+    Shadows::{CarLightShadowIntent, ShadowProjectionDiagnostics, project_additive_shadow},
 };
 use bevy::{
     pbr::{Material, MaterialPipeline, MaterialPipelineKey},
@@ -13,6 +13,69 @@ use bevy::{
     },
     shader::ShaderRef,
 };
+
+/// CBrightLights::Render's untextured automobile cubes (SpecialFX.cpp:694-862).
+/// Shared by front/rear types; handling selects long, small, big or tall.
+pub(super) fn build_vehicle_bright_light_mesh(
+    intent: &crate::renderer::SpecialFX::BrightLightRenderIntent,
+) -> Option<Mesh> {
+    let shape = match intent.light_type {
+        4..=7 => intent.light_type - 4,
+        8..=11 => intent.light_type - 8,
+        _ => return None,
+    };
+    let [side, front, up] = match shape {
+        0 => [0.2, 0.1, 0.1],
+        1 => [0.08, 0.08, 0.08],
+        2 => [0.15, 0.15, 0.15],
+        _ => [0.08, 0.08, 0.2],
+    };
+    let positions = (0..8)
+        .map(|i| {
+            (intent.position
+                + intent.side * if i & 1 == 0 { -side } else { side }
+                + intent.front * if i & 2 == 0 { front } else { -front }
+                + intent.up * if i & 4 == 0 { up } else { -up })
+            .to_bevy()
+            .to_array()
+        })
+        .collect::<Vec<_>>();
+    Some(
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_indices(Indices::U32(vec![
+            0, 2, 1, 1, 2, 3, 3, 5, 1, 3, 7, 5, 2, 7, 3, 2, 6, 7, 4, 0, 1, 4, 1, 5, 6, 0, 4, 6, 2,
+            0, 6, 5, 7, 6, 4, 5,
+        ]))
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 8]),
+    )
+}
+
+/// The caller consumes one native random draw per bulb, including white fronts.
+pub(super) fn vehicle_bright_light_colour(
+    intent: &crate::renderer::SpecialFX::BrightLightRenderIntent,
+    flicker: u8,
+) -> Option<[u8; 4]> {
+    let rgb = match intent.light_type {
+        4..=7 => [255, 255, 255],
+        8..=11 => [255, flicker, flicker],
+        _ => return None,
+    };
+    let distance = intent.camera_distance;
+    let alpha = if distance < 15.0 {
+        31.0
+    } else if distance < 30.0 {
+        31.0 + 224.0 * ((distance - 15.0) / 15.0)
+    } else if distance < 45.0 {
+        255.0
+    } else {
+        255.0 * (1.0 - (distance - 45.0) / 15.0)
+    };
+    Some([rgb[0], rgb[1], rgb[2], alpha.clamp(0.0, 255.0) as u8])
+}
 
 /// Same WESL RenderWare modulation as other GTA draws, with the original
 /// SHADOWTYPE_ADDITIVE ONE/ONE blend and depth-test/no-depth-write state.
@@ -96,16 +159,30 @@ pub(super) fn flush_car_light_meshes(
 ) {
     diagnostics.begin_frame();
     let mut active = 0;
-    let intents = shadows
-        .as_mut()
-        .map(|shadows| {
-            let mut intents: Vec<_> = std::mem::take(&mut shadows.car_light_shadows)
-                .into_iter().map(|intent| (intent, 6.0)).collect();
-            intents.extend(std::mem::take(&mut shadows.pickup_shadows).into_iter().map(|intent| (
-                CarLightShadowIntent { key: intent.key, texture: intent.texture as usize, position: intent.position,
-                    front: intent.front, side: intent.side, color: intent.color }, 4.0)));
-            intents
-        });
+    let intents = shadows.as_mut().map(|shadows| {
+        let mut intents: Vec<_> = std::mem::take(&mut shadows.car_light_shadows)
+            .into_iter()
+            .map(|intent| (intent, 6.0))
+            .collect();
+        intents.extend(
+            std::mem::take(&mut shadows.pickup_shadows)
+                .into_iter()
+                .map(|intent| {
+                    (
+                        CarLightShadowIntent {
+                            key: intent.key,
+                            texture: intent.texture as usize,
+                            position: intent.position,
+                            front: intent.front,
+                            side: intent.side,
+                            color: intent.color,
+                        },
+                        4.0,
+                    )
+                }),
+        );
+        intents
+    });
     if let (Some(shadows), Some(loader), Some(intents)) =
         (shadows.as_ref(), loader.as_ref(), intents)
     {
@@ -243,5 +320,82 @@ pub(super) fn reset_car_light_meshes(
     }
     for mut visibility in &mut draws {
         *visibility = Visibility::Hidden;
+    }
+}
+
+#[cfg(test)]
+mod bulb_tests {
+    use super::*;
+    use crate::renderer::SpecialFX::BrightLightRenderIntent;
+
+    fn bulb(light_type: u8, distance: f32) -> BrightLightRenderIntent {
+        BrightLightRenderIntent {
+            position: CVector::new(10.0, 20.0, 30.0),
+            side: CVector::new(0.0, 1.0, 0.0),
+            front: CVector::new(-1.0, 0.0, 0.0),
+            up: CVector::new(0.0, 0.0, 1.0),
+            light_type,
+            camera_distance: distance,
+        }
+    }
+
+    #[test]
+    fn native_shapes_follow_actor_basis_and_share_front_rear_topology() {
+        for (shape, [side, front, up]) in [
+            [0.2, 0.1, 0.1],
+            [0.08, 0.08, 0.08],
+            [0.15, 0.15, 0.15],
+            [0.08, 0.08, 0.2],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for base in [4, 8] {
+                let mesh =
+                    build_vehicle_bright_light_mesh(&bulb(base + shape as u8, 30.0)).unwrap();
+                let bevy::mesh::VertexAttributeValues::Float32x3(positions) =
+                    mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
+                else {
+                    panic!("position format")
+                };
+                assert_eq!(positions.len(), 8);
+                assert_eq!(
+                    positions[0],
+                    CVector::new(10.0 - front, 20.0 - side, 30.0 + up)
+                        .to_bevy()
+                        .to_array()
+                );
+                assert_eq!(
+                    positions[7],
+                    CVector::new(10.0 + front, 20.0 + side, 30.0 - up)
+                        .to_bevy()
+                        .to_array()
+                );
+                assert_eq!(mesh.indices().unwrap().len(), 36);
+            }
+        }
+        assert!(build_vehicle_bright_light_mesh(&bulb(3, 30.0)).is_none());
+    }
+
+    #[test]
+    fn near_and_far_fades_preserve_native_bulb_colours() {
+        for (distance, alpha) in [
+            (0.0, 31),
+            (15.0, 31),
+            (22.5, 143),
+            (30.0, 255),
+            (45.0, 255),
+            (52.5, 127),
+            (60.0, 0),
+        ] {
+            assert_eq!(
+                vehicle_bright_light_colour(&bulb(4, distance), 42),
+                Some([255, 255, 255, alpha])
+            );
+            assert_eq!(
+                vehicle_bright_light_colour(&bulb(8, distance), 42),
+                Some([255, 42, 42, alpha])
+            );
+        }
     }
 }

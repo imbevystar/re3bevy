@@ -1,4 +1,0 @@
-name = "replay_vehicle_frame"
-
-[tolerance]
-default = 0.00001

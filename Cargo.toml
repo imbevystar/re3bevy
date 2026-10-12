@@ -8,13 +8,6 @@ members = [
     "crates/re3bevy_dev_arena",
     "crates/re3bevy_formats",
     "crates/re3bevy_game",
-    "parity/rust_harness",
-    "parity/scm_boot_harness",
-    "parity/world_at_spawn_harness",
-    "parity/world_systems_harness",
-    "parity/player_control_harness",
-    "parity/intro_freeroam_harness",
-    "parity/vehicle_render_harness",
 ]
 resolver = "3"
 

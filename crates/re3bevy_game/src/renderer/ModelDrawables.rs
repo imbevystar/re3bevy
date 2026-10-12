@@ -161,6 +161,8 @@ pub struct ModelMaterialDrawable {
     pub mesh: Mesh,
     pub base_color: Color,
     pub texture_name: Option<String>,
+    /// Source MatFX DUAL texture; used by the optional Neo World UV2 shader.
+    pub dual_texture_name: Option<String>,
     pub texture_model_index: usize,
     /// TXD captured with a cutscene object's cloned clump. Special model IDs
     /// are reused after `CreateInstance`, so consulting the live model slot can
@@ -2827,6 +2829,7 @@ pub(super) fn append_decoded_geometry_drawables(
             mesh,
             base_color: material_base_color(material, vehicle_colours),
             texture_name: material.and_then(|m| m.texture_name.clone()),
+            dual_texture_name: material.and_then(|m| m.dual_texture_name.clone()),
             texture_model_index,
             texture_txd_slot: None,
             vertex_count: unique.into_iter().filter(|used| *used).count(),
@@ -2894,6 +2897,8 @@ fn build_submesh_from_geometry(
     let mut positions = Vec::with_capacity(vertex_count.min(triangle_indices.len()));
     let mut normals = Vec::with_capacity(positions.capacity());
     let mut uvs = Vec::with_capacity(positions.capacity());
+    let second_uv_set = geometry.tex_coords.get(1).filter(|set| set.len() == vertex_count);
+    let mut uvs_b = Vec::with_capacity(positions.capacity());
     let mut colours = Vec::with_capacity(positions.capacity());
     let mut indices = Vec::with_capacity(valid_indices.len());
     for &src in &valid_indices {
@@ -2935,6 +2940,10 @@ fn build_submesh_from_geometry(
             } else {
                 uvs.push([0.0, 0.0]);
             }
+            if let Some(second_uv_set) = second_uv_set {
+                // Keep DFF's second authored UV channel for Neo World lightmaps.
+                uvs_b.push(second_uv_set[src_index]);
+            }
             if geometry.prelit_colors.len() == vertex_count {
                 colours.push(rgba_u8_to_f32(geometry.prelit_colors[src_index]));
             } else {
@@ -2945,7 +2954,11 @@ fn build_submesh_from_geometry(
         };
         indices.push(dst);
     }
-    build_mesh_from_world_buffers(positions, normals, uvs, colours, indices)
+    let mut mesh = build_mesh_from_world_buffers(positions, normals, uvs, colours, indices)?;
+    if second_uv_set.is_some() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uvs_b);
+    }
+    Some(mesh)
 }
 
 fn build_mesh_from_world_buffers(

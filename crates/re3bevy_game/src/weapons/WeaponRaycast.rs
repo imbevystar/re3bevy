@@ -76,7 +76,7 @@ pub(crate) enum WeaponRayHit {
 }
 
 impl WeaponRayHit {
-    fn distance(self) -> f32 {
+    pub(crate) fn distance(self) -> f32 {
         match self {
             Self::Player { distance, .. }
             | Self::Ped { distance, .. }
@@ -140,7 +140,7 @@ fn weapon_collision_model_hit(
     Some((delta.magnitude(), point, normal))
 }
 
-fn weapon_ped_model_hit(
+pub(crate) fn weapon_ped_model_hit(
     source: CVector,
     target: CVector,
     ped: &CPed,

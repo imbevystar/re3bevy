@@ -1679,6 +1679,8 @@ pub(crate) fn complete_script_ped_exit_vehicle(
         if let Some(position) = cleared_exit_position {
             ped.ped.physical.entity.set_position(position);
         }
+        ped.animation.finish_vehicle_exit();
+        ped.ped.stored_move_state = eMoveState::PEDMOVE_NONE;
         ped.ped.ped_state = PedState::PED_IDLE;
         ped.ped.physical.entity.flags.uses_collision = true;
         ped.ped.physical.move_speed = CVector::ZERO;
@@ -1814,6 +1816,7 @@ fn finish_script_ped_dragged_out_animation(
         if ped.ped.ped_state != PedState::PED_ARRESTED {
             ped.ped.last_ped_state = PedState::PED_NONE;
         }
+        ped.animation.finish_vehicle_exit();
         ped.ped.seek_target = None;
         ped.ped.stored_move_state = eMoveState::PEDMOVE_NONE;
         ped.ped.flags.veh_exit_will_be_instant = false;
@@ -3608,6 +3611,8 @@ pub(crate) fn complete_player_exit_vehicle(
         return;
     };
 
+    player.animation.finish_vehicle_exit();
+    player.ped.stored_move_state = eMoveState::PEDMOVE_NONE;
     let position =
         ground_ped_exit_position(Some(file_loader), player.ped.physical.entity.get_position());
     player.set_position(position);

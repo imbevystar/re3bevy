@@ -25,6 +25,8 @@ pub const MARKERTYPE_1: u16 = 4;
 pub const BRIGHTLIGHT_TRAFFIC_GREEN: u8 = 1;
 pub const BRIGHTLIGHT_TRAFFIC_YELLOW: u8 = 2;
 pub const BRIGHTLIGHT_TRAFFIC_RED: u8 = 3;
+pub const BRIGHTLIGHT_FRONT: u8 = 4;
+pub const BRIGHTLIGHT_REAR: u8 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CBulletTraceState {
@@ -128,6 +130,7 @@ pub struct BrightLightRenderIntent {
     pub position: CVector,
     pub up: CVector,
     pub side: CVector,
+    pub front: CVector,
     pub light_type: u8,
     pub camera_distance: f32,
 }
@@ -377,10 +380,24 @@ impl CSpecialFX {
             return;
         }
         let range = (position.x - player_position.x).hypot(position.y - player_position.y);
-        let slot = self.markers.iter().position(|m| !m.is_used && m.identifier == identifier)
-            .or_else(|| self.markers.iter().position(|m| m.marker_type == MARKERTYPE_INVALID))
-            .or_else(|| (marker_type == MARKERTYPE_ARROW).then(|| self.markers.iter()
-                .position(|m| m.marker_type == MARKERTYPE_ARROW && m.player_range > range)).flatten());
+        let slot = self
+            .markers
+            .iter()
+            .position(|m| !m.is_used && m.identifier == identifier)
+            .or_else(|| {
+                self.markers
+                    .iter()
+                    .position(|m| m.marker_type == MARKERTYPE_INVALID)
+            })
+            .or_else(|| {
+                (marker_type == MARKERTYPE_ARROW)
+                    .then(|| {
+                        self.markers.iter().position(|m| {
+                            m.marker_type == MARKERTYPE_ARROW && m.player_range > range
+                        })
+                    })
+                    .flatten()
+            });
         let Some(slot) = slot else {
             warn_once!(target: "re3bevy::markers", "C3dMarkers marker pool exhausted");
             return;
@@ -409,18 +426,29 @@ impl CSpecialFX {
         marker.player_range = range;
         if marker_type == MARKERTYPE_ARROW {
             marker.standard_size = if range < 25.0 {
-                if range > 5.0 { size - (25.0 - range) * (0.3 * size) / 20.0 }
-                else { size * 0.7 }
-            } else { size };
+                if range > 5.0 {
+                    size - (25.0 - range) * (0.3 * size) / 20.0
+                } else {
+                    size * 0.7
+                }
+            } else {
+                size
+            };
         } else {
             marker.color[3] = if range < size + 12.0 {
-                if range > size + 1.0 { ((1.0 - (size + 12.0 - range) * 0.7 / 11.0) * a as f32) as u8 }
-                else { (a as f32 * 0.3) as u8 }
-            } else { a };
+                if range > size + 1.0 {
+                    ((1.0 - (size + 12.0 - range) * 0.7 / 11.0) * a as f32) as u8
+                } else {
+                    (a as f32 * 0.3) as u8
+                }
+            } else {
+                a
+            };
         }
         if reused {
             let phase = std::f32::consts::TAU
-                * ((marker.pulse_period - 1) as u32 & time_ms.wrapping_sub(marker.start_time)) as f32
+                * ((marker.pulse_period - 1) as u32 & time_ms.wrapping_sub(marker.start_time))
+                    as f32
                 / marker.pulse_period as f32;
             let sine = phase.sin();
             marker.size = marker.standard_size * (1.0 - pulse_fraction * sine);
@@ -442,6 +470,26 @@ impl CSpecialFX {
         light_type: u8,
         camera_position: CVector,
     ) {
+        self.register_bright_light(
+            position,
+            up,
+            side,
+            CVector::ZERO,
+            light_type,
+            camera_position,
+        );
+    }
+
+    /// Native shared admission for traffic and automobile bulbs.
+    pub fn register_bright_light(
+        &mut self,
+        position: CVector,
+        up: CVector,
+        side: CVector,
+        front: CVector,
+        light_type: u8,
+        camera_position: CVector,
+    ) {
         if self.bright_light_render_intents.len() >= NUMBRIGHTLIGHTS {
             return;
         }
@@ -459,6 +507,7 @@ impl CSpecialFX {
                 position,
                 up,
                 side,
+                front,
                 light_type,
                 camera_distance,
             });
@@ -582,11 +631,15 @@ impl CSpecialFX {
 
         for marker in &mut self.markers {
             if !marker.is_used {
-                if marker.atomic_present { *marker = C3dMarkerState::default(); }
+                if marker.atomic_present {
+                    *marker = C3dMarkerState::default();
+                }
                 continue;
             }
             marker.is_used = false;
-            if marker.player_range >= 120.0 { continue; }
+            if marker.player_range >= 120.0 {
+                continue;
+            }
             self.marker_render_intents.push(Marker3dRenderIntent {
                 position: CVector::new(
                     marker.position.x,
@@ -630,14 +683,42 @@ mod tests {
         let mut fx = CSpecialFX::init();
         let position = CVector::new(10.0, 10.0, 3.0);
         for (scale, rate) in [(1.0, 1), (0.93, 2), (0.86, -1)] {
-            fx.place_marker(42, MARKERTYPE_CYLINDER, position, 2.0 * scale,
-                0, 128, 255, 128, 2048, 0.1, rate, 100, position, 1.0);
+            fx.place_marker(
+                42,
+                MARKERTYPE_CYLINDER,
+                position,
+                2.0 * scale,
+                0,
+                128,
+                255,
+                128,
+                2048,
+                0.1,
+                rate,
+                100,
+                position,
+                1.0,
+            );
         }
         fx.build_render_intents(100);
         assert_eq!(fx.drain_marker_intents().len(), 3);
         for (scale, rate) in [(1.0, 1), (0.93, 2), (0.86, -1)] {
-            fx.place_marker(42, MARKERTYPE_CYLINDER, position, 2.0 * scale,
-                0, 128, 255, 128, 2048, 0.1, rate, 612, position, 0.5);
+            fx.place_marker(
+                42,
+                MARKERTYPE_CYLINDER,
+                position,
+                2.0 * scale,
+                0,
+                128,
+                255,
+                128,
+                2048,
+                0.1,
+                rate,
+                612,
+                position,
+                0.5,
+            );
         }
         fx.build_render_intents(612);
         let intents = fx.drain_marker_intents();
@@ -712,6 +793,25 @@ mod tests {
         );
         assert!(fx.bright_light_render_intents.is_empty());
 
+        fx.register_bright_light(
+            CVector::new(60.0, 0.0, 0.0),
+            CVector::new(0.0, 0.0, 1.0),
+            CVector::new(1.0, 0.0, 0.0),
+            CVector::new(0.0, 1.0, 0.0),
+            BRIGHTLIGHT_FRONT,
+            camera,
+        );
+        assert_eq!(fx.bright_light_render_intents[0].camera_distance, 60.0);
+        fx.register_bright_light(
+            CVector::new(60.1, 0.0, 0.0),
+            CVector::ZERO,
+            CVector::ZERO,
+            CVector::ZERO,
+            BRIGHTLIGHT_REAR,
+            camera,
+        );
+        assert_eq!(fx.bright_light_render_intents.len(), 1);
+
         for _ in 0..(NUMBRIGHTLIGHTS + 4) {
             fx.register_traffic_bright_light(
                 CVector::new(10.0, 0.0, 0.0),
@@ -722,6 +822,8 @@ mod tests {
             );
         }
         assert_eq!(fx.bright_light_render_intents.len(), NUMBRIGHTLIGHTS);
+        assert_eq!(fx.drain_bright_light_intents().len(), NUMBRIGHTLIGHTS);
+        assert!(fx.bright_light_render_intents.is_empty());
     }
 
     #[test]

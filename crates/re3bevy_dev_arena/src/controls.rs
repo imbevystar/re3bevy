@@ -1023,6 +1023,8 @@ pub(crate) fn step_uncontrolled_arena_automobiles(
             CAutomobileDriveStepInput {
                 control: CAutomobileControlInput {
                     steering_left_right: 0.0,
+                    mouse_x: 0.0,
+                    mouse_steering: false,
                     accelerate: 0.0,
                     brake,
                     handbrake,
@@ -2447,6 +2449,8 @@ fn step_ported_automobile(
         CAutomobileDriveStepInput {
             control: CAutomobileControlInput {
                 steering_left_right,
+                mouse_x: 0.0,
+                mouse_steering: false,
                 accelerate: button(keys.is_some_and(|keys| keys.pressed(KeyCode::KeyW)))
                     .max(f32::from(pad.get_accelerate()))
                     .max(f32::from(pad.new_state.right_shoulder2)),

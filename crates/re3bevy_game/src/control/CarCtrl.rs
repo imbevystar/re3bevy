@@ -2260,8 +2260,11 @@ pub(crate) fn process_simple_automobile_control(
             // no-police volumes (and also ignored the bridge/indoor cull
             // state refreshed by `update_cull_zone_runtime`).
             no_police_zone: file_loader.world.cull_zones.player_no_police(),
-            // TODO(parity): CTrafficLights::ShouldCarStopForBridge admission.
-            bridge_requires_stop: false,
+            bridge_requires_stop: CTrafficLights::should_car_stop_for_bridge_links(
+                &file_loader.path_find,
+                car.vehicle.core.auto_pilot.next_path_node_info as usize,
+                car.vehicle.core.auto_pilot.current_path_node_info as usize,
+            ),
             target_car_position: car
                 .vehicle.core.auto_pilot
                 .target_car
@@ -2959,8 +2962,11 @@ pub(crate) fn process_physics_automobile_ai_control(
             player_ignored_by_cops: ignored_by_cops,
             wanted_level: wanted_level.clamp(0, u8::MAX as i32) as u8,
             no_police_zone: file_loader.world.cull_zones.player_no_police(),
-            // TODO(parity): CTrafficLights::ShouldCarStopForBridge admission.
-            bridge_requires_stop: false,
+            bridge_requires_stop: CTrafficLights::should_car_stop_for_bridge_links(
+                &file_loader.path_find,
+                car.vehicle.core.auto_pilot.next_path_node_info as usize,
+                car.vehicle.core.auto_pilot.current_path_node_info as usize,
+            ),
             target_car_position: target_car.map(|target| target.position),
             target_car_is_player_vehicle: car
                 .vehicle.core.auto_pilot

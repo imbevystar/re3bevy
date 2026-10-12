@@ -1,5 +1,5 @@
 import bevy_pbr::render::forward_io::VertexOutput;
-import super::rw_unlit_util::{apply_colour_filter_iii, rw_to_linear_rgb};
+import super::rw_unlit_util::rw_target_rgb;
 
 @group(3) @binding(0) var<uniform> sky_top: vec4<f32>;
 @group(3) @binding(1) var<uniform> sky_bottom: vec4<f32>;
@@ -33,6 +33,5 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // CClouds feeds 0..255 RenderWare/D3D8 channel values directly to Im2D.
-    let rw_colour = apply_colour_filter_iii(background, postfx_blur_colour);
-    return vec4<f32>(rw_to_linear_rgb(rw_colour.rgb), rw_colour.a);
+    return vec4<f32>(rw_target_rgb(background.rgb), background.a);
 }

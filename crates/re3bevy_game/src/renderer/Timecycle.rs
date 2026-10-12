@@ -502,7 +502,7 @@ fn set_record(out: &mut CTimeCycle, hour: usize, weather: usize, record: TimeCyc
     out.blur_alpha[hour][weather] = record.blur[3];
 }
 
-fn empty_timecycle() -> CTimeCycle {
+pub(super) fn empty_timecycle() -> CTimeCycle {
     CTimeCycle {
         ambient_red: [[0; NUMWEATHERS]; NUMHOURS],
         ambient_green: [[0; NUMWEATHERS]; NUMHOURS],

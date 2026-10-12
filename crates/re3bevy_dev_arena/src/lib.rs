@@ -661,6 +661,7 @@ fn arena_global_lighting(timecycle: &CTimeCycle) -> GtaGlobalLighting {
     GtaGlobalLighting {
         fog_colour_and_start: fog.extend(current.fog_start),
         ambient: Vec3::from_array(current.ambient).extend(0.0),
+        actor_ambient: (Vec3::from_array(current.ambient) * 1.3).min(Vec3::ONE).extend(0.0),
         directional: Vec3::from_array(current.directional).extend(0.0),
         light_direction_and_far_clip: sun.extend(current.far_clip),
         postfx_blur_colour: Vec4::new(
@@ -669,6 +670,7 @@ fn arena_global_lighting(timecycle: &CTimeCycle) -> GtaGlobalLighting {
             (current.blur[2] / 255.0).clamp(0.0, 1.0),
             (current.blur[3] / 255.0).clamp(0.0, 1.0),
         ),
+        ..Default::default()
     }
 }
 

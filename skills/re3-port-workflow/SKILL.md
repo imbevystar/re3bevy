@@ -15,14 +15,14 @@ description: re3bevy source changes, behavior investigation, bounded cleanup and
 
 - Trace the relevant C++ declarations, implementations and call sites under `references/re-GTA/src`, then the Rust production path. Do not guess constants, coordinate conversions, timing, state transitions or failure behavior.
 - Separate GTA decisions from parsing, ECS scheduling, physics and rendering. Extend the existing owner; avoid parallel implementations, placeholder gameplay, no-ops and silent substitutes.
-- For bugs, missing behavior and ports, read [behavior-parity.md](references/behavior-parity.md): follow the complete affected path and interfaces, fix related causes, and keep unrelated discoveries outside the change.
+- For bugs, missing behavior and ports, follow the complete affected C++ reference and Rust production path: inspect loading, state, timing, Bevy systems and consumers; fix related causes rather than isolated symptoms. Keep unrelated discoveries outside the change.
 - For source cleanup or refactoring, read [code-quality.md](references/code-quality.md). Cleanup is bounded by the task, not permission to rewrite everything encountered.
 - Select domain skills through [AGENTS.md](../../AGENTS.md). For runtime state, scheduling or lifecycle changes, also read [re3-ecs-runtime](../re3-ecs-runtime/SKILL.md); for original data/loading/deployment, read [gta-assets-formats](../gta-assets-formats/SKILL.md).
 
 ## Verification and completion
 
 - Validate after a coherent implementation; use an interim check when it resolves a blocker or meaningful uncertainty. Do not build, launch or add a probe after every small edit.
-- Check affected crates and run relevant existing tests/parity cases. Add lasting regression coverage only for a meaningful behavioral risk, using existing infrastructure. A blanket nextest/workspace run is not mandatory for every change.
+- Check affected crates and run relevant existing tests. Add lasting regression coverage only for a meaningful behavioral risk, using existing infrastructure. A blanket nextest/workspace run is not mandatory for every change.
 - Game behavior changes require production-game observation or runtime evidence for the affected path. Compilation and isolated tests alone do not establish runtime correctness. If runtime verification is blocked, state the blocker and the unverified behavior; do not claim full completion.
 - Follow [AGENTS.md](../../AGENTS.md) for shared build cache and temporary outputs. Instruction-only changes need coverage/link checks; no game launch.
 - Report the change, relevant evidence and material remaining issues briefly in conversation. Do not turn task findings into new documentation or skill history.

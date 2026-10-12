@@ -1145,6 +1145,10 @@ impl CStreaming {
         Ok(())
     }
 
+    /// Drop unserved requests at a restart boundary. re3 then calls
+    /// `FlushChannels` to finish in-flight reads and split conversions. The
+    /// cooperative `LoadScene` barrier drains those channels on later frames,
+    /// so retain their ownership until the normal streaming pump finishes them.
     pub fn flush_request_list(&mut self) {
         self.snapshot_requested_list();
         let mut scan_index = 0;
@@ -1152,15 +1156,6 @@ impl CStreaming {
             let id = self.requested_scan[scan_index];
             scan_index += 1;
             self.remove_model(id);
-        }
-        self.flush_channels_shape();
-    }
-
-    pub fn flush_channels_shape(&mut self) {
-        for channel in &mut self.channel {
-            if channel.state == ChannelState::Started || channel.state == ChannelState::Reading {
-                channel.state = ChannelState::Idle;
-            }
         }
     }
 

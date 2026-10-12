@@ -1,6 +1,0 @@
-name = "ifp_anim_metadata"
-asset_root_config = "config/original_gta3_path.txt"
-relative_path = "ANIM/PED.IFP"
-
-[tolerance]
-default = 0

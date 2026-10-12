@@ -14,6 +14,6 @@ issues briefly rather than folding them into the task.
 - Remove temporary debugging code. Keep useful diagnostics bounded and on the correct owner; avoid per-frame log spam.
 - Extract functions/components when responsibility or access warrants it. File size alone is not a reason for a broad split.
 
-Preserve behavior during cleanup. If evidence shows a behavior divergence, use
-[behavior-parity.md](behavior-parity.md) for that correction. If isolated checks
-pass but the game fails, inspect production inputs, ordering and lifecycle.
+Preserve behavior during cleanup. If evidence shows a behavior divergence,
+trace the original C++ decision and the affected Rust production path. If
+isolated checks pass but the game fails, inspect inputs, ordering and lifecycle.

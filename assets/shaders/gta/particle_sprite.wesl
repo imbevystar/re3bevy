@@ -37,16 +37,20 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(sprite_texture, sprite_sampler, input.uv);
-    // RenderWare's sprite path discards transparent raster texels.  Keep the
-    // same alpha-test behaviour so cloudmasked/rubber rasters cannot render
-    // as opaque rectangular cards.
-    if texel.a <= 0.01 {
+    // DefinedState / SetAlphaRef(2): alpha test follows texture/vertex
+    // modulation (D3D8 GREATER 2, librw GREATEREQUAL 3).
+    let alpha = texel.a * input.color.a;
+    if alpha < 3.0 / 255.0 {
         discard;
     }
     // D3D8 modulated material*texture*vertex colour on encoded channel values;
-    // UnormSrgb blending operates on raw stored values, so perform the
-    // modulation encoded and hand the hardware linear values for storage.
+    // an encoded compositing target also adds these values directly. Decoding
+    // before ONE/ONE blending loses the bright yellow core of overlapping fire.
     let tex_rw = linear_to_rw_rgb(texel.rgb);
     let rgb_rw = tex_rw * input.color.rgb;
-    return vec4<f32>(rw_to_linear_rgb(rgb_rw), texel.a * input.color.a);
+    @if(PARTICLE_ENCODED_TARGET) {
+        return vec4<f32>(rgb_rw, alpha);
+    } @else {
+        return vec4<f32>(rw_to_linear_rgb(rgb_rw), alpha);
+    }
 }

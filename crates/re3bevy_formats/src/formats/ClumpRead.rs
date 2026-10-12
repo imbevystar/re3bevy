@@ -16,6 +16,8 @@ pub const RW_ID_STRING: u32 = 0x02;
 pub const RW_ID_EXTENSION: u32 = 0x03;
 pub const RW_ID_TEXTURE: u32 = 0x06;
 pub const RW_ID_MATERIAL: u32 = 0x07;
+/// Criterion MatFX material extension (not the Atomic MatFX flag).
+pub const RW_ID_MATFX: u32 = 0x120;
 pub const RW_ID_MATLIST: u32 = 0x08;
 pub const RW_ID_FRAMELIST: u32 = 0x0E;
 pub const RW_ID_GEOMETRY: u32 = 0x0F;
@@ -69,6 +71,8 @@ pub struct RwMaterialDescriptor {
     pub diffuse: f32,
     pub texture_name: Option<String>,
     pub mask_name: Option<String>,
+    /// MatFX DUAL second texture, if the material carries effect 4.
+    pub dual_texture_name: Option<String>,
 }
 
 impl RwMaterialDescriptor {
@@ -802,6 +806,13 @@ fn read_material_descriptor(
         }
     }
 
+    let dual_texture_name = rw_stream_find_chunk(bytes, RW_ID_EXTENSION)
+        .and_then(|extension| {
+            let extension_bytes = &bytes[extension.data_start..extension.data_end];
+            let matfx = rw_stream_find_chunk(extension_bytes, RW_ID_MATFX)?;
+            read_matfx_dual_texture_name(&extension_bytes[matfx.data_start..matfx.data_end])
+        });
+
     Some(RwMaterialDescriptor {
         color,
         textured,
@@ -810,7 +821,67 @@ fn read_material_descriptor(
         diffuse,
         texture_name,
         mask_name,
+        dual_texture_name,
     })
+}
+
+/// MatFX stream layout: effect type (4), first effect type (4), followed by
+/// its payload. For DUAL: src blend (4), dst blend (4), texture flag (4),
+/// optional nested RwTexture chunk. Never scan arbitrary bytes for a name: a
+/// malformed extension must not produce a fabricated lightmap attachment.
+fn read_matfx_dual_texture_name(payload: &[u8]) -> Option<String> {
+    const DUAL_EFFECT: u32 = 4;
+    if read_u32_le(payload, 0)? != DUAL_EFFECT || read_u32_le(payload, 4)? != DUAL_EFFECT {
+        return None;
+    }
+    // Ignore blend functions here. Neo's `neoWorldIII_PS` does not use them;
+    // it uses WorldLightmapBlend and the authored UV2 sample instead.
+    read_i32_le(payload, 8)?;
+    read_i32_le(payload, 12)?;
+    if read_i32_le(payload, 16)? == 0 { return None; }
+    let texture = read_chunk_header(payload, 20)?;
+    if texture.id != RW_ID_TEXTURE { return None; }
+    read_texture_chunk_names(&payload[texture.data_start..texture.data_end]).0
+}
+
+#[cfg(test)]
+mod matfx_dual_stream_tests {
+    use super::*;
+
+    fn chunk(id: u32, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&id.to_le_bytes());
+        bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&0x1803_FFFFu32.to_le_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    #[test]
+    fn dual_effect_reads_only_its_embedded_rw_texture() {
+        let texture = chunk(RW_ID_STRING, b"road_light\0");
+        let nested = chunk(RW_ID_TEXTURE, &texture);
+        let mut matfx = Vec::new();
+        for value in [4u32, 4, 5, 6, 1] {
+            matfx.extend_from_slice(&value.to_le_bytes());
+        }
+        matfx.extend_from_slice(&nested);
+        matfx.extend_from_slice(&0u32.to_le_bytes()); // second effect = null
+        assert_eq!(read_matfx_dual_texture_name(&matfx).as_deref(), Some("road_light"));
+        matfx[0] = 2; // envmap must not be misclassified as a dual lightmap
+        assert!(read_matfx_dual_texture_name(&matfx).is_none());
+    }
+
+    #[test]
+    fn malformed_or_absent_dual_texture_has_no_binding() {
+        let mut matfx = Vec::new();
+        for value in [4u32, 4, 5, 6, 0] {
+            matfx.extend_from_slice(&value.to_le_bytes());
+        }
+        assert!(read_matfx_dual_texture_name(&matfx).is_none());
+        matfx.truncate(17);
+        assert!(read_matfx_dual_texture_name(&matfx).is_none());
+    }
 }
 
 fn read_texture_chunk_names(bytes: &[u8]) -> (Option<String>, Option<String>) {

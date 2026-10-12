@@ -91,8 +91,7 @@ def check(root: Path, snapshot: bool) -> list[str]:
         present.append(relative)
         name = path.name.lower()
         suffix = path.suffix.lower()
-        cpp_harness = tuple(part.lower() for part in parts[:2]) == ("parity", "cpp_harness")
-        if parts[0].lower() == "references" or (snapshot and cpp_harness):
+        if parts[0].lower() == "references":
             problems.append(f"Reference source in distribution: {relative}")
         if name in GAME_FILES or suffix in GAME_SUFFIXES:
             problems.append(f"Possible original game data; review its origin: {relative}")
@@ -150,8 +149,7 @@ def main() -> int:
         for relative in paths:
             source = root / relative
             if (relative == ".gitmodules"
-                    or PurePosixPath(relative).parts[0] == "references"
-                    or relative.startswith("parity/cpp_harness/")):
+                    or PurePosixPath(relative).parts[0] == "references"):
                 continue
             if not source.is_file():
                 continue
@@ -168,7 +166,7 @@ def main() -> int:
             return 1
         print(f"History-free source snapshot created: {destination}")
     print("Source file hygiene checks passed. This does not clear redistribution rights.")
-    print("Reference trees and the C++ parity harness stay local; review THIRD_PARTY_NOTICES.md.")
+    print("Reference trees stay local; review THIRD_PARTY_NOTICES.md.")
     return 0
 
 

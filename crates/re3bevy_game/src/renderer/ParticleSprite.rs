@@ -1,9 +1,10 @@
 //! re3 reference: references/re-GTA/src/renderer/Particle.cpp (`CParticle::Render`)
+//! re3 reference: references/re-GTA/src/renderer/Coronas.cpp (`CCoronas::Render`)
 //! re3 reference: references/re-GTA/src/renderer/Sprite.cpp
 //!   (`CSprite::CalcScreenCoors`, `CSprite::RenderBufferedOneXLUSprite`,
 //!    `CSprite::RenderBufferedOneXLUSprite_Rotate_Dimension`)
 //!
-//! Screen-space particle sprite pass. Particles are drawn exactly like re3:
+//! Shared screen-space particle/corona/cloud sprite pass. Particles follow re3:
 //! buffered screen-space textured quads with per-system blend state
 //! (additive default, DRAW_OPAQUE -> SRCALPHA/INVSRCALPHA, DRAW_DARK ->
 //! SRCALPHA/ONE), depth test against the scene depth buffer with depth writes
@@ -20,6 +21,7 @@
 //! ordering follow Sprite.cpp/Particle.cpp verbatim in device pixel space.
 
 use std::{
+    cmp::Reverse,
     collections::HashMap,
     sync::{
         OnceLock,
@@ -60,19 +62,15 @@ use super::{
         sync_txd_slot_texture_cache,
     },
     Clouds::CClouds,
+    Coronas::{CCoronas, TYPE_STREAK},
     Draw::CDraw,
     ParticleMgr::{
         DRAW_DARK, DRAW_OPAQUE, DRAWTOP2D, SCREEN_TRAIL, SPEED_TRAIL, VERT_TRAIL,
         cParticleSystemMgr,
     },
-    ParticleType::{
-        PARTICLE_BOAT_WAKE, PARTICLE_RAINDROP_SMALL, tParticleType,
-    },
+    ParticleType::{PARTICLE_BOAT_WAKE, PARTICLE_RAINDROP_SMALL, tParticleType},
 };
-use crate::{
-    core::{Camera::CCamera, FileLoader::CFileLoader},
-    extras::postfx::CPostFX,
-};
+use crate::core::FileLoader::CFileLoader;
 use re3bevy_core::core::Timer::CTimer;
 
 /// re3 `DefaultFOV` (`references/re-GTA/src/core/Camera.h:43`).
@@ -175,8 +173,8 @@ const SPRITE_VERTEX_COUNT: u32 = 6;
 pub struct ParticleSpriteBatch {
     pub image: AssetId<Image>,
     pub blend: ParticleBlendMode,
-    /// False only for `DRAWTOP2D` particles, which re3 draws with the z-test
-    /// temporarily disabled (`Sprite.cpp:73-77`).
+    /// False for `DRAWTOP2D` particles (`Sprite.cpp:73-77`) and LOS-checked
+    /// coronas (`Coronas.cpp::Render`), which disable the depth test.
     pub z_test_enabled: bool,
     pub first_vertex: u32,
     pub vertex_count: u32,
@@ -189,6 +187,8 @@ pub struct GtaParticleSpriteFrame {
     pub(crate) vertices: Vec<PackedSpriteVertex>,
     /// Vertices produced by `CParticle::Render`-equivalent particle sprites.
     pub particle_vertex_count: usize,
+    /// Vertices produced by the primary `CCoronas::Render` glow sprites.
+    pub corona_vertex_count: usize,
     /// Vertices produced by the `CClouds::Render` screen-space cloud slice.
     pub cloud_vertex_count: usize,
 }
@@ -242,20 +242,6 @@ fn push_sprite(
     if let Some(batch) = frame.batches.last_mut() {
         batch.vertex_count += SPRITE_VERTEX_COUNT;
     }
-}
-
-fn apply_postfx_rgb(rgb: [u8; 3], multiplier: [f32; 3]) -> [u8; 3] {
-    [
-        (f32::from(rgb[0]) * multiplier[0])
-            .round()
-            .clamp(0.0, 255.0) as u8,
-        (f32::from(rgb[1]) * multiplier[1])
-            .round()
-            .clamp(0.0, 255.0) as u8,
-        (f32::from(rgb[2]) * multiplier[2])
-            .round()
-            .clamp(0.0, 255.0) as u8,
-    ]
 }
 
 /// Unrotated buffered sprite with screen-edge UV clipping
@@ -439,8 +425,6 @@ pub fn build_particle_sprite_frame(
     draw: Option<Res<CDraw>>,
     timer: Option<Res<CTimer>>,
     frame_state: Option<Res<GtaRenderFrameState>>,
-    camera_state: Option<Res<CCamera>>,
-    postfx: Option<Res<CPostFX>>,
     // Same-frame camera projection: the Camera set writes Transform earlier
     // this frame; GlobalTransform only propagates in PostUpdate.
     cameras: Query<(&Camera, &Transform, &Projection), With<Camera3d>>,
@@ -450,6 +434,7 @@ pub fn build_particle_sprite_frame(
     frame.batches.clear();
     frame.vertices.clear();
     frame.particle_vertex_count = 0;
+    frame.corona_vertex_count = 0;
     frame.cloud_vertex_count = 0;
 
     let Some((camera, camera_transform, projection)) = cameras
@@ -505,12 +490,6 @@ pub fn build_particle_sprite_frame(
             .unwrap_or(RE3_GAME_FOV_FALLBACK);
     let aspect_ratio_scale = RE3_DEFAULT_ASPECT_RATIO / (viewport_size.x / viewport_size.y);
     let time_step = timer.map(|timer| timer.time_step()).unwrap_or(1.0);
-    let postfx_multiplier = postfx
-        .as_deref()
-        .zip(camera_state.as_deref())
-        .map_or([1.0; 3], |(postfx, camera)| {
-            postfx.effective_colour_multiplier(camera)
-        });
 
     // Project a world point into re3's device-pixel sprite space:
     // returns (screen px, ndc depth, view depth). CalcScreenCoors rejects
@@ -534,8 +513,9 @@ pub fn build_particle_sprite_frame(
     };
 
     // re3 iterates systems in enum order and walks each system list in
-    // insertion order (Particle.cpp:1498-1790). Sorting by (type, sequence)
-    // reproduces both levels of ordering. The buffer is reused across frames
+    // newest-first order: AddParticle prepends to the system list
+    // (Particle.cpp:1035-1039, 1498-1790). Alpha-blended smoke must retain
+    // this order too. The buffer is reused across frames
     // to avoid a per-frame order-list allocation on this hot path.
     ordered_buf.clear();
     ordered_buf.extend(
@@ -543,7 +523,7 @@ pub fn build_particle_sprite_frame(
             .iter()
             .map(|(entity, _, particle)| (particle.particle_type, particle.spawn_sequence, entity)),
     );
-    ordered_buf.sort_by_key(|&(particle_type, sequence, _)| (particle_type, sequence));
+    ordered_buf.sort_by_key(|&(particle_type, sequence, _)| (particle_type, Reverse(sequence)));
 
     let mut batch_key: Option<BatchKey> = None;
     // `CParticle::Render` keeps the last bound raster in RenderWare state.
@@ -551,28 +531,32 @@ pub fn build_particle_sprite_frame(
     // with this value; retaining it here removes the old invisible-particle
     // regression without adding a fabricated fallback texture.
     let mut last_bound_image: Option<AssetId<Image>> = None;
+    let mut last_particle_type = None;
 
     for (_, _, entity) in ordered_buf.iter().copied() {
         let Ok((_, trans, mut particle)) = particles.get_mut(entity) else {
             continue;
         };
         let world_translation = trans.translation;
+        // CParticle::Render binds the system's first raster even when its
+        // head particle is invisible. Static systems never index current_frame.
+        if last_particle_type != Some(particle.particle_type) {
+            if let Some(first) = particle.animation_frames.first() {
+                last_bound_image = Some(first.id());
+            }
+            last_particle_type = Some(particle.particle_type);
+        }
         if particle.alpha == 0 {
             continue;
         }
-        let image_id = particle
-            .animation_frames
-            .get(particle.current_frame)
-            .map(|handle| handle.id())
-            .or(last_bound_image);
-        let Some(image_id) = image_id else { continue };
-        if let Some(current) = particle
-            .animation_frames
-            .get(particle.current_frame)
-            .map(|handle| handle.id())
+        if particle.final_frame != 0
+            && let Some(current) = particle.animation_frames.get(particle.current_frame)
         {
-            last_bound_image = Some(current);
+            last_bound_image = Some(current.id());
         }
+        let Some(image_id) = last_bound_image else {
+            continue;
+        };
 
         let blend = if particle.flags & DRAW_OPAQUE != 0 {
             ParticleBlendMode::StandardAlpha
@@ -584,14 +568,11 @@ pub fn build_particle_sprite_frame(
         let is_top2d = particle.flags & DRAWTOP2D != 0;
 
         // RwIm2DVertexSetIntRGBA: r*intens >> 8 (Sprite.cpp:260).
-        let rgb = apply_postfx_rgb(
-            [
-                ((u16::from(particle.colour[0]) * u16::from(particle.intensity)) >> 8) as u8,
-                ((u16::from(particle.colour[1]) * u16::from(particle.intensity)) >> 8) as u8,
-                ((u16::from(particle.colour[2]) * u16::from(particle.intensity)) >> 8) as u8,
-            ],
-            postfx_multiplier,
-        );
+        let rgb = [
+            ((u16::from(particle.colour[0]) * u16::from(particle.intensity)) >> 8) as u8,
+            ((u16::from(particle.colour[1]) * u16::from(particle.intensity)) >> 8) as u8,
+            ((u16::from(particle.colour[2]) * u16::from(particle.intensity)) >> 8) as u8,
+        ];
 
         // DRAWTOP2D particles carry their position directly in device pixel
         // space and draw with size*63 dimensions (Particle.cpp:1579-1606).
@@ -920,7 +901,17 @@ impl SpecializedRenderPipeline for GtaParticleSpritePipeline {
             },
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
-                shader_defs: Vec::new(),
+                // Unorm attachments blend encoded RW bytes. Camera3d does
+                // not currently support CompositingSpace::Srgb, so ordinary
+                // sRGB/HDR targets still require linear output and do not
+                // reproduce native encoded-space blend arithmetic.
+                shader_defs: vec![bevy::shader::ShaderDefVal::Bool(
+                    "PARTICLE_ENCODED_TARGET".into(),
+                    matches!(
+                        key.color_format,
+                        TextureFormat::Rgba8Unorm | TextureFormat::Bgra8Unorm
+                    ),
+                )],
                 constants: Default::default(),
                 entry_point: Some("fs_main".into()),
                 targets: vec![Some(ColorTargetState {
@@ -1060,6 +1051,233 @@ fn particle_sprite_pass(
     }
 }
 
+/// Appends primary corona glows to the existing sprite frame. Schedule after
+/// `build_particle_sprite_frame` and before `append_cloud_sprite_frame`.
+/// Texture resolution and fade/LOS state remain owned by their existing systems;
+/// this consumer only builds `Coronas.cpp::Render` / `Sprite.cpp` draw geometry.
+#[allow(clippy::too_many_arguments)]
+pub fn append_corona_sprite_frame(
+    mut frame: ResMut<GtaParticleSpriteFrame>,
+    coronas: Option<ResMut<CCoronas>>,
+    weather: Option<Res<super::Weather::CWeather>>,
+    draw: Option<Res<CDraw>>,
+    frame_state: Option<Res<GtaRenderFrameState>>,
+    file_loader: Option<Res<CFileLoader>>,
+    mut texture_cache: ResMut<GtaWorldTextureCache>,
+    mut images: ResMut<Assets<Image>>,
+    // Read the Camera stage's current pose, preferring the active scene camera.
+    cameras: Query<
+        (
+            &Camera,
+            &Transform,
+            &Projection,
+            Option<&super::BevyRender::GtaSceneCamera>,
+        ),
+        With<Camera3d>,
+    >,
+    windows: Query<&Window>,
+) {
+    frame.corona_vertex_count = 0;
+    let start_vertex = frame.vertices.len();
+    let (Some(mut coronas), Some(file_loader)) = (coronas, file_loader) else {
+        return;
+    };
+    let Some(particle_slot) = file_loader.txd_store.find_txd_slot("particle") else {
+        return;
+    };
+    let _ = sync_txd_slot_texture_cache(
+        particle_slot,
+        &file_loader,
+        &mut texture_cache,
+        &mut images,
+    );
+    let Some((camera, camera_transform, projection)) = cameras
+        .iter()
+        .filter(|(camera, _, _, _)| camera.is_active)
+        .max_by_key(|(_, _, _, scene)| scene.is_some())
+        .or_else(|| {
+            cameras
+                .iter()
+                .max_by_key(|(_, _, _, scene)| scene.is_some())
+        })
+        .map(|(camera, transform, proj, _)| (camera, transform, proj))
+    else {
+        return;
+    };
+    let Projection::Perspective(perspective) = projection else {
+        return;
+    };
+    let Some(viewport) = camera
+        .viewport
+        .as_ref()
+        .map(|viewport| viewport.physical_size.as_vec2())
+        .or_else(|| {
+            windows
+                .iter()
+                .next()
+                .map(|window| Vec2::new(window.width(), window.height()))
+        })
+        .filter(|size| size.x > 0.0 && size.y > 0.0)
+    else {
+        return;
+    };
+
+    let view_from_world = camera_transform.to_matrix().inverse();
+    let clip_from_view = perspective.get_clip_from_view();
+    let far_clip = frame_state
+        .as_ref()
+        .map(|state| state.far_clip)
+        .filter(|far| *far > 0.0)
+        .unwrap_or(perspective.far);
+    let fov_scale = RE3_DEFAULT_FOV / draw.as_ref().map_or(RE3_GAME_FOV_FALLBACK, |draw| draw.fov);
+    let aspect_scale = RE3_DEFAULT_ASPECT_RATIO / (viewport.x / viewport.y);
+    let foggyness = weather.as_ref().map_or(0.0, |weather| weather.foggyness);
+    let mut batch_key = frame
+        .batches
+        .last()
+        .map(|batch| (batch.image, batch.blend, batch.z_test_enabled));
+
+    // Render visits even zero-fade entries so the first visible projection
+    // clears offScreen and CRegisteredCorona::Update can begin fading in.
+    // Native slot order; no second collection of live corona state.
+    let texture_names = coronas.texture_names;
+    for corona in coronas.coronas.iter_mut().filter(|corona| corona.id != 0) {
+        corona.off_screen = true;
+        let view = view_from_world * corona.coors.to_bevy().extend(1.0);
+        let view_depth = -view.z;
+        // CalcScreenCoors(..., true) first; the draw-distance gate follows
+        // the screen test in Coronas.cpp::Render.
+        if view_depth <= perspective.near + 1.0
+            || view_depth >= far_clip
+        {
+            continue;
+        }
+        let clip = clip_from_view * view;
+        let ndc = clip.truncate() / clip.w;
+        let centre = Vec2::new(
+            (ndc.x * 0.5 + 0.5) * viewport.x,
+            (1.0 - (ndc.y * 0.5 + 0.5)) * viewport.y,
+        );
+        if centre.x < 0.0 || centre.y < 0.0 || centre.x > viewport.x || centre.y > viewport.y {
+            continue;
+        }
+        corona.off_screen = false;
+        if corona.fade_alpha == 0 || view_depth >= corona.draw_dist {
+            continue;
+        }
+        let texture_name = texture_names
+            .get(corona.texture_type as usize)
+            .copied()
+            .unwrap_or("corona");
+        let Some(image) = texture_cache
+            .images
+            .get(&(particle_slot, texture_name.to_ascii_lowercase()))
+            .map(|image| image.id())
+        else {
+            bevy::log::warn_once!(
+                "corona sprite texture missing from resolved particle TXD: {texture_name}"
+            );
+            continue;
+        };
+        let recip_z = 1.0 / view_depth;
+        let base_half = Vec2::new(
+            fov_scale * aspect_scale * viewport.x,
+            fov_scale * viewport.y,
+        ) * recip_z
+            * corona.size;
+        let fade_distance = corona.draw_dist * 0.5;
+        let distance_fade = if view_depth < fade_distance {
+            1.0
+        } else {
+            1.0 - (view_depth - fade_distance) / fade_distance
+        };
+        // C++ truncates totalFade and each fog-divided channel before the
+        // Sprite.cpp integer >>8 modulation. Fade changes RGB, never alpha.
+        let mut intensity = (f32::from(corona.fade_alpha) * distance_fade) as u16;
+        let fog_scale = 1.0 + foggyness * view_depth.min(40.0) / 40.0;
+        let mut rgb = [corona.red, corona.green, corona.blue]
+            .map(|channel| (f32::from(channel) / fog_scale) as u8);
+        // SUN_CORE = 1 (Coronas.h). Bias only depth; size/rotation use the
+        // original projected depth. Adapt depth with the live reverse-Z matrix.
+        let biased_depth = if corona.id == 1 {
+            0.95 * far_clip
+        } else {
+            view_depth
+        } - 1.5;
+        let biased_clip = clip_from_view * Vec4::new(0.0, 0.0, -biased_depth, 1.0);
+        if biased_clip.w <= 0.0 {
+            continue;
+        }
+        let depth_ndc = (biased_clip.z / biased_clip.w).clamp(0.0, 1.0);
+        let z_test_enabled = !corona.los_check;
+
+        if corona.texture_type == TYPE_STREAK {
+            let f = 1.0 - corona.some_angle * 2.0 / std::f32::consts::PI;
+            let width_scale = 6.0 * f.powi(8) + 0.5;
+            let height_scale = (0.35 - (width_scale - 0.5) * 0.06).max(0.15);
+            // The native streak width deliberately omits fog_scale.
+            rgb = rgb.map(|channel| ((u16::from(channel) * intensity) >> 8) as u8);
+            emit_plain_sprite(
+                &mut frame,
+                &mut batch_key,
+                centre,
+                base_half * Vec2::new(width_scale, fog_scale * height_scale),
+                viewport,
+                rgb,
+                255,
+                depth_ndc,
+                image,
+                ParticleBlendMode::Additive,
+                z_test_enabled,
+            );
+        } else {
+            // RenderOneXLUSprite_Rotate_Aspect has a near fade absent from
+            // both the plain and buffered sprite routines. It attenuates RGB
+            // and intensity separately before the final colour multiplication.
+            if biased_depth < 3.0 {
+                if biased_depth < 1.5 {
+                    continue;
+                }
+                let near_fade = ((biased_depth - 1.5) / 1.5 * 255.0) as u16;
+                rgb = rgb.map(|channel| ((near_fade * u16::from(channel)) >> 8) as u8);
+                intensity = (near_fade * intensity) >> 8;
+            }
+            rgb = rgb.map(|channel| ((u16::from(channel) * intensity) >> 8) as u8);
+            let half = base_half * fog_scale;
+            // This routine rotates an aspect-scaled square, unlike the
+            // buffered Dimension routine used by particles (degrees there).
+            let (s, c) = (20.0 * recip_z).sin_cos();
+            let corners = [
+                [centre.x + half.x * (-c - s), centre.y + half.y * (-c + s)],
+                [centre.x + half.x * (-c + s), centre.y + half.y * (c + s)],
+                [centre.x + half.x * (c + s), centre.y + half.y * (c - s)],
+                [centre.x + half.x * (c - s), centre.y + half.y * (-c - s)],
+            ];
+            if corners.iter().all(|p| p[0] < 0.0)
+                || corners.iter().all(|p| p[0] > viewport.x)
+                || corners.iter().all(|p| p[1] < 0.0)
+                || corners.iter().all(|p| p[1] > viewport.y)
+            {
+                continue;
+            }
+            push_sprite(
+                &mut frame,
+                &mut batch_key,
+                image,
+                ParticleBlendMode::Additive,
+                z_test_enabled,
+                corners,
+                [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
+                rgb,
+                255,
+                depth_ndc,
+                viewport,
+            );
+        }
+    }
+    frame.corona_vertex_count = frame.vertices.len().saturating_sub(start_vertex);
+}
+
 /// Appends the visible low/fluffy-cloud portion of `CClouds::Render` to the
 /// same pre-projected sprite frame used by particles.
 ///
@@ -1073,8 +1291,6 @@ pub fn append_cloud_sprite_frame(
     mut frame: ResMut<GtaParticleSpriteFrame>,
     clouds: Option<Res<CClouds>>,
     draw: Option<Res<CDraw>>,
-    camera_state: Option<Res<CCamera>>,
-    postfx: Option<Res<CPostFX>>,
     file_loader: Option<Res<CFileLoader>>,
     mut texture_cache: ResMut<GtaWorldTextureCache>,
     mut images: ResMut<Assets<Image>>,
@@ -1143,12 +1359,6 @@ pub fn append_cloud_sprite_frame(
             .map(|draw| draw.fov)
             .unwrap_or(RE3_GAME_FOV_FALLBACK);
     let aspect_ratio_scale = RE3_DEFAULT_ASPECT_RATIO / (viewport_size.x / viewport_size.y);
-    let postfx_multiplier = postfx
-        .as_deref()
-        .zip(camera_state.as_deref())
-        .map_or([1.0; 3], |(postfx, camera)| {
-            postfx.effective_colour_multiplier(camera)
-        });
 
     // `CalcScreenCoors(..., false)`: reject behind/near-camera points, but do
     // not apply the far clip used by the normal particle path.
@@ -1207,10 +1417,6 @@ pub fn append_cloud_sprite_frame(
             .sqrt()
             .min(1.0);
         let camera_roll_degrees = horizontal_right.acos().copysign(right_gta.z).to_degrees();
-        let filtered_colour = apply_postfx_rgb(
-            [intent.colour[0], intent.colour[1], intent.colour[2]],
-            postfx_multiplier,
-        );
         emit_rotated_sprite(
             &mut frame,
             &mut batch_key,
@@ -1219,7 +1425,7 @@ pub fn append_cloud_sprite_frame(
             base_h * intent.height,
             intent.rotation_degrees + camera_roll_degrees,
             viewport_size,
-            filtered_colour,
+            [intent.colour[0], intent.colour[1], intent.colour[2]],
             intent.colour[3],
             // re3 draws clouds before the world with Z test/write disabled.
             // This custom pass runs after the world, so reverse-Z depth 0 with
@@ -1235,6 +1441,289 @@ pub fn append_cloud_sprite_frame(
 }
 
 pub struct GtaParticleSpritePlugin;
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        BevyRender::{GtaParticleSpawnSequence, consume_particle_intents},
+        Particle::{CParticle, ParticleColour},
+        ParticleType::{PARTICLE_CARFLAME, PARTICLE_CARFLAME_SMOKE},
+    };
+    use super::*;
+    use re3bevy_core::core::Coordinates::CVector;
+
+    fn corona_sprite_app() -> (App, Handle<Image>) {
+        let mut app = App::new();
+        let mut loader = CFileLoader::default();
+        let slot = loader.txd_store.add_txd_slot("particle");
+        let txd = loader.txd_store.slot(slot).unwrap();
+        let generation = txd.generation;
+        let revision = txd.texture_revision;
+        let mut images = Assets::<Image>::default();
+        let image = images.add(Image::default());
+        let mut cache = GtaWorldTextureCache::default();
+        cache.synced_txd_generations.insert(slot, generation);
+        cache.synced_txd_revisions.insert(slot, revision);
+        cache
+            .images
+            .insert((slot, "corona".to_owned()), image.clone());
+        cache
+            .images
+            .insert((slot, "streek".to_owned()), image.clone());
+        app.insert_resource(loader)
+            .insert_resource(cache)
+            .insert_resource(images)
+            .insert_resource(CCoronas::init())
+            .init_resource::<GtaParticleSpriteFrame>()
+            .add_systems(Update, append_corona_sprite_frame);
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Transform::from_xyz(3.0, 0.0, 0.0),
+            Projection::Perspective(PerspectiveProjection {
+                near: 0.1,
+                far: 100.0,
+                ..default()
+            }),
+        ));
+        app.world_mut().spawn(Window {
+            resolution: (1280, 720).into(),
+            ..default()
+        });
+        (app, image)
+    }
+
+    fn test_corona(id: u32, depth: f32) -> super::super::Coronas::CRegisteredCorona {
+        super::super::Coronas::CRegisteredCorona {
+            id,
+            red: 255,
+            green: 129,
+            blue: 7,
+            alpha: 255,
+            fade_alpha: 129,
+            coors: CVector::from_bevy(Vec3::new(3.0, 0.0, -depth)),
+            size: 0.8,
+            draw_dist: 40.0,
+            texture_type: super::super::Coronas::TYPE_NORMAL,
+            ..default()
+        }
+    }
+
+    #[test]
+    fn corona_glows_append_native_rgb_fade_rotation_and_biased_depth() {
+        let (mut app, image) = corona_sprite_app();
+        let mut weather = super::super::Weather::CWeather::init();
+        weather.foggyness = 1.0;
+        app.insert_resource(weather);
+        {
+            let mut coronas = app.world_mut().resource_mut::<CCoronas>();
+            coronas.coronas[0] = test_corona(10, 30.0);
+            coronas.coronas[1] = test_corona(1, 30.0);
+            coronas.coronas[1].los_check = true;
+        }
+        // Existing particle geometry must survive the corona append.
+        {
+            let mut frame = app.world_mut().resource_mut::<GtaParticleSpriteFrame>();
+            emit_plain_sprite(
+                &mut frame,
+                &mut None,
+                Vec2::splat(50.0),
+                Vec2::splat(5.0),
+                Vec2::new(1280.0, 720.0),
+                [1, 2, 3],
+                100,
+                0.1,
+                image.id(),
+                ParticleBlendMode::StandardAlpha,
+                true,
+            );
+            frame.particle_vertex_count = 6;
+        }
+        app.update();
+        let frame = app.world().resource::<GtaParticleSpriteFrame>();
+        assert_eq!(frame.particle_vertex_count, 6);
+        assert_eq!(frame.corona_vertex_count, 12);
+        assert_eq!(frame.vertices.len(), 18);
+        assert_eq!(frame.vertices[0].colour, [1, 2, 3, 100]);
+        // totalFade truncates to 64; fog-divided RGB truncates to [145,73,4].
+        assert_eq!(frame.vertices[6].colour, [36, 18, 1, 255]);
+        assert_eq!(frame.batches[1].blend, ParticleBlendMode::Additive);
+        assert_eq!(frame.batches[1].image, image.id());
+        assert!(frame.batches[1].z_test_enabled);
+        assert!(!frame.batches[2].z_test_enabled);
+        let blend = frame.batches[1].blend.blend_state().unwrap();
+        assert_eq!(blend.color.src_factor, BlendFactor::One);
+        assert_eq!(blend.color.dst_factor, BlendFactor::One);
+        let projection = PerspectiveProjection {
+            near: 0.1,
+            far: 100.0,
+            ..default()
+        };
+        for (vertex, depth) in [(6, 28.5), (12, 93.5)] {
+            let clip = projection.get_clip_from_view() * Vec4::new(0.0, 0.0, -depth, 1.0);
+            assert!((frame.vertices[vertex].position[2] - clip.z / clip.w).abs() < 1e-6);
+        }
+        // Aspect rotation is in radians and independently scales X and Y.
+        let (s, c) = (20.0_f32 / 30.0).sin_cos();
+        let half = Vec2::new(1280.0 * 0.75, 720.0) * (70.0 / 120.0) / 30.0 * 0.8 * 1.75;
+        assert!((frame.vertices[6].position[0] - half.x * (-c - s) * 2.0 / 1280.0).abs() < 1e-6);
+        assert!((frame.vertices[6].position[1] + half.y * (-c + s) * 2.0 / 720.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn corona_near_fade_and_streak_fog_width_follow_distinct_native_sprite_routines() {
+        let (mut app, _) = corona_sprite_app();
+        {
+            let mut coronas = app.world_mut().resource_mut::<CCoronas>();
+            coronas.coronas[0] = test_corona(10, 3.75);
+            coronas.coronas[0].fade_alpha = 255;
+            coronas.coronas[0].size = 0.02;
+            coronas.coronas[1] = test_corona(11, 2.9); // biased z < 1.5: rotated sprite rejected
+        }
+        app.update();
+        let frame = app.world().resource::<GtaParticleSpriteFrame>();
+        assert_eq!(frame.corona_vertex_count, 6);
+        // Biased depth 2.25: near factor 127 attenuates colour and intensity.
+        assert_eq!(frame.vertices[0].colour, [62, 31, 1, 255]);
+
+        let mut weather = super::super::Weather::CWeather::init();
+        weather.foggyness = 1.0;
+        app.insert_resource(weather);
+        {
+            let mut coronas = app.world_mut().resource_mut::<CCoronas>();
+            coronas.coronas[0] = test_corona(10, 30.0);
+            coronas.coronas[0].texture_type = TYPE_STREAK;
+            coronas.coronas[1].id = 0;
+        }
+        *app.world_mut().resource_mut::<GtaParticleSpriteFrame>() = default();
+        app.update();
+        let frame = app.world().resource::<GtaParticleSpriteFrame>();
+        assert_eq!(frame.corona_vertex_count, 6);
+        assert_eq!(frame.vertices[0].colour, [36, 18, 1, 255]);
+        let half = Vec2::new(1280.0 * 0.75, 720.0) * (70.0 / 120.0) / 30.0 * 0.8;
+        assert!((frame.vertices[0].position[0] + half.x * 6.5 * 2.0 / 1280.0).abs() < 1e-6);
+        assert!((frame.vertices[0].position[1] - half.y * 1.75 * 0.15 * 2.0 / 720.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn corona_glows_reject_far_and_near_depth_and_require_resolved_texture() {
+        let (mut app, _) = corona_sprite_app();
+        {
+            let mut coronas = app.world_mut().resource_mut::<CCoronas>();
+            for (i, depth) in [1.1, 40.0, 100.0, -10.0].into_iter().enumerate() {
+                coronas.coronas[i] = test_corona(10 + i as u32, depth);
+            }
+            coronas.coronas[2].draw_dist = 200.0; // camera far clip, not draw distance
+        }
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<GtaParticleSpriteFrame>()
+                .corona_vertex_count,
+            0
+        );
+        app.world_mut().resource_mut::<CCoronas>().coronas[0] = test_corona(10, 10.0);
+        app.world_mut()
+            .resource_mut::<GtaWorldTextureCache>()
+            .images
+            .clear();
+        app.update();
+        let frame = app.world().resource::<GtaParticleSpriteFrame>();
+        assert_eq!(frame.corona_vertex_count, 0);
+        assert!(frame.vertices.is_empty());
+    }
+
+    #[test]
+    fn production_particle_requests_draw_newest_first_with_native_fire_colour_and_size() {
+        let mut app = App::new();
+        let mut systems = cParticleSystemMgr::default();
+        for kind in [PARTICLE_CARFLAME, PARTICLE_CARFLAME_SMOKE] {
+            let system = systems.particle_mut(kind).unwrap();
+            system.default_initial_radius = 0.8;
+            system.fade_to_black_initial_intensity = 255;
+            system.fade_alpha_initial_intensity = 255;
+        }
+        systems.particle_mut(PARTICLE_CARFLAME_SMOKE).unwrap().flags = DRAW_OPAQUE;
+        app.insert_resource(systems)
+            .init_resource::<CParticle>()
+            .init_resource::<GtaParticleSpawnSequence>()
+            .init_resource::<GtaParticleSpriteFrame>()
+            .init_resource::<GtaWorldTextureCache>()
+            .init_resource::<Assets<Image>>()
+            .add_systems(Update, consume_particle_intents);
+        app.world_mut()
+            .spawn((Camera3d::default(), Transform::default()));
+        app.world_mut().spawn(Window {
+            resolution: (1280, 720).into(),
+            ..default()
+        });
+        for (kind, rgb) in [
+            (PARTICLE_CARFLAME, [10, 20, 30]),
+            (PARTICLE_CARFLAME, [255, 74, 30]),
+            (PARTICLE_CARFLAME_SMOKE, [32, 32, 32]),
+        ] {
+            app.world_mut()
+                .resource_mut::<CParticle>()
+                .add_particle_coloured(
+                    kind,
+                    CVector::new(0.0, 10.0, 0.0),
+                    CVector::ZERO,
+                    None,
+                    0.8,
+                    ParticleColour {
+                        red: rgb[0],
+                        green: rgb[1],
+                        blue: rgb[2],
+                        alpha: 255,
+                    },
+                    0,
+                    0,
+                    0,
+                    0,
+                );
+        }
+        app.update();
+        let image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let other_image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        for mut particle in app
+            .world_mut()
+            .query::<&mut GtaParticleBillboard>()
+            .iter_mut(app.world_mut())
+        {
+            particle.animation_frames = vec![image.clone(), other_image.clone()];
+            particle.current_frame = 1;
+        }
+        app.add_systems(
+            Update,
+            build_particle_sprite_frame.after(consume_particle_intents),
+        );
+        app.update();
+        let frame = app.world().resource::<GtaParticleSpriteFrame>();
+        assert_eq!(frame.particle_vertex_count, 18);
+        assert_eq!(frame.vertices[0].colour, [254, 73, 29, 255]);
+        assert_eq!(frame.vertices[6].colour, [9, 19, 29, 255]);
+        assert_eq!(frame.vertices[12].colour, [31, 31, 31, 255]);
+        assert_eq!(frame.batches[0].blend, ParticleBlendMode::Additive);
+        assert_eq!(frame.batches[1].blend, ParticleBlendMode::StandardAlpha);
+        assert_eq!(
+            frame.batches[0].image,
+            image.id(),
+            "static fire always binds the first raster"
+        );
+        // Sprite.cpp treats w/h as half-dimensions, not full quad size.
+        let half_height = 0.8 * (70.0 / 120.0) / 10.0 * 720.0;
+        assert!((frame.vertices[0].position[1] - half_height * 2.0 / 720.0).abs() < 0.00001);
+        assert_eq!(
+            frame.vertices[0].colour[3], 255,
+            "additive fire retains authored alpha"
+        );
+    }
+}
 
 impl Plugin for GtaParticleSpritePlugin {
     fn build(&self, app: &mut App) {

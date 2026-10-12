@@ -2713,6 +2713,142 @@ mod streaming_request_cleanup_tests {
     };
 
     #[test]
+    fn resurrection_scene_barrier_drains_inflight_reads_and_split_conversions() {
+        use crate::core::Streaming::{ChannelState, RequestOutcome};
+        use re3bevy_assets::streaming::CdStream::{CDSTREAM_SECTOR_SIZE, CdStream, StreamStatus};
+        use re3bevy_formats::formats::ClumpRead::{RW_ID_CLUMP, RW_ID_FRAMELIST, RW_ID_STRUCT};
+
+        fn chunk(id: u32, payload: &[u8]) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&id.to_le_bytes());
+            bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+            bytes.extend_from_slice(payload);
+            bytes
+        }
+
+        // A valid empty clump exercises the production DFF parser and, for
+        // vehicles, both split conversion phases without original game data.
+        let mut payload = chunk(RW_ID_STRUCT, &0i32.to_le_bytes());
+        payload.extend(chunk(
+            RW_ID_FRAMELIST,
+            &chunk(RW_ID_STRUCT, &0i32.to_le_bytes()),
+        ));
+        let mut bytes = chunk(RW_ID_CLUMP, &payload);
+        bytes.resize(CDSTREAM_SECTOR_SIZE, 0);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "re3bevy-restart-streaming-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&temp_dir).unwrap();
+        struct Fixture(std::path::PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(self.0.join("test.img"));
+                let _ = std::fs::remove_dir(&self.0);
+            }
+        }
+        let fixture = Fixture(temp_dir);
+        let image = fixture.0.join("test.img");
+        std::fs::write(&image, bytes).unwrap();
+
+        for channel in 0..2 {
+            for split in [false, true] {
+                let mut loader = CFileLoader::default();
+                let mut streaming = CStreaming::default();
+                let model = 724;
+                if split {
+                    loader.model_info.add_vehicle_model(model);
+                } else {
+                    loader.model_info.add_simple_model(model);
+                }
+                streaming.info_for_model[model].set_cd_posn_and_size(0, 1);
+                streaming.image_offsets[0] = 0;
+                streaming.image_size = 1;
+                streaming.streaming_buffer_size = 1;
+                streaming.current_channel = channel;
+                let mut cd = CdStream::init(2);
+                cd.add_image(&image).unwrap();
+                streaming.request_model(model, 0);
+                streaming
+                    .request_model_stream(channel, &mut cd, &mut loader)
+                    .unwrap();
+                assert_eq!(cd.sync(channel), StreamStatus::None);
+                if split {
+                    streaming.process_loading_channel(channel, &cd, &mut loader);
+                    assert!(streaming.channel[channel].completed_data.is_some());
+                }
+                let expected_channel = if split {
+                    ChannelState::Started
+                } else {
+                    ChannelState::Reading
+                };
+                let expected_model = if split {
+                    StreamLoadState::Started
+                } else {
+                    StreamLoadState::Reading
+                };
+                assert_eq!(streaming.channel[channel].state, expected_channel);
+                assert_eq!(streaming.info_for_model[model].load_state, expected_model);
+
+                // Production resurrection flushes queued requests immediately
+                // before beginning the cooperative LoadScene barrier.
+                let stale = 725;
+                streaming.request_model(stale, STREAMFLAGS_PRIORITY);
+                streaming.flush_request_list();
+                assert_eq!(
+                    streaming.info_for_model[stale].load_state,
+                    StreamLoadState::NotLoaded
+                );
+                assert_eq!(streaming.num_models_requested, 0);
+                assert_eq!(streaming.num_priority_requests, 0);
+                assert_eq!(streaming.channel[channel].state, expected_channel);
+                assert_eq!(streaming.channel[channel].stream_ids[0], model as i32);
+                assert_eq!(streaming.info_for_model[model].load_state, expected_model);
+                assert_eq!(streaming.request_model(model, 0), RequestOutcome::Updated);
+
+                loader.begin_load_scene_streaming(&mut streaming, [0.0; 3]);
+                for _ in 0..8 {
+                    if loader
+                        .pump_script_streaming_barrier(&mut streaming, &mut cd)
+                        .unwrap()
+                    {
+                        break;
+                    }
+                }
+                assert!(!loader.scene_load_in_progress());
+                assert_eq!(
+                    streaming.info_for_model[model].load_state,
+                    StreamLoadState::Loaded
+                );
+                assert!(
+                    loader
+                        .model_info
+                        .get_model_info(model)
+                        .unwrap()
+                        .base()
+                        .rw_object_loaded
+                );
+                assert!(
+                    streaming
+                        .channel
+                        .iter()
+                        .all(|c| c.state == ChannelState::Idle)
+                );
+                assert!(streaming.channel[channel].completed_data.is_none());
+                assert_eq!(
+                    streaming.request_model(model, 0),
+                    RequestOutcome::AlreadyLoaded
+                );
+            }
+        }
+    }
+
+    #[test]
     fn restart_reset_rebuilds_world_and_advances_rw_object_epoch() {
         let mut file_loader = CFileLoader::default();
         file_loader.world.process_cutscene_only = true;

@@ -169,7 +169,7 @@ impl CCoronas {
                 green,
                 blue,
                 alpha,
-                fade_alpha: alpha,
+                fade_alpha: 0,
                 coors,
                 size,
                 some_angle,
@@ -179,10 +179,10 @@ impl CCoronas {
                 reflection,
                 texture_type: texture_type.min(8),
                 los_check: los_check != 0,
-                off_screen: false,
+                off_screen: true,
                 first_update: true,
                 draw_streak: draw_streak != 0,
-                sight_clear: true,
+                sight_clear: false,
             };
         }
     }
@@ -203,30 +203,39 @@ impl CCoronas {
         }
     }
 
-    /// re3 `CCoronas::Update` — fade and clear unregistered slots.
-    pub fn update(&mut self) {
+    /// re3 `CRegisteredCorona::Update`: the preceding render pass determines
+    /// offScreen; registration from the preceding world pass determines alpha.
+    pub fn update_with_time_step(&mut self, time_step: f32) {
+        let fade_step = (15.0 * time_step.max(0.0)).max(0.0);
         for corona in &mut self.coronas {
             if corona.id == 0 {
                 continue;
             }
             if !corona.registered_this_frame {
-                // Fade out then free.
-                if corona.fade_alpha > 20 {
-                    corona.fade_alpha = corona.fade_alpha.saturating_sub(20);
-                } else {
-                    *corona = CRegisteredCorona::default();
-                    continue;
-                }
-            } else if corona.first_update {
-                corona.fade_alpha = corona.alpha;
-                corona.first_update = false;
-            } else if corona.fade_alpha < corona.alpha {
-                corona.fade_alpha = (corona.fade_alpha as i16 + 20).min(corona.alpha as i16) as u8;
-            } else if corona.fade_alpha > corona.alpha {
-                corona.fade_alpha = corona.fade_alpha.saturating_sub(20).max(corona.alpha);
+                corona.alpha = 0;
             }
+            let fade = f32::from(corona.fade_alpha);
+            let alpha = f32::from(corona.alpha);
+            corona.fade_alpha = if corona.off_screen {
+                (fade - fade_step).max(0.0) as u8
+            } else if alpha > fade {
+                (fade + fade_step).min(alpha) as u8
+            } else if alpha < fade {
+                (fade - fade_step).max(alpha) as u8
+            } else {
+                corona.fade_alpha
+            };
+            if corona.fade_alpha == 0 && !corona.first_update {
+                *corona = CRegisteredCorona::default();
+                continue;
+            }
+            corona.first_update = false;
             corona.registered_this_frame = false;
         }
+    }
+
+    pub fn update(&mut self) {
+        self.update_with_time_step(1.0);
     }
 
     /// Active coronas for this frame's Bevy flush.
@@ -241,5 +250,40 @@ impl CCoronas {
             .get(texture_type as usize)
             .copied()
             .unwrap_or("corona")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unseen_corona_releases_pool_slot_and_visible_corona_fades_in() {
+        let mut coronas = CCoronas::init();
+        let register = |coronas: &mut CCoronas| {
+            coronas.register_corona(
+                42, 255, 160, 50, 255, CVector::ZERO, 2.0, 100.0,
+                TYPE_STAR, FLARE_NONE, REFLECTION_OFF, LOSCHECK_OFF, STREAK_OFF, 0.0,
+            );
+        };
+        register(&mut coronas);
+        assert_eq!(coronas.coronas[0].fade_alpha, 0);
+        assert!(coronas.coronas[0].off_screen);
+        coronas.update_with_time_step(1.0);
+        assert_eq!(coronas.coronas[0].id, 42);
+        register(&mut coronas);
+        coronas.update_with_time_step(1.0);
+        assert_eq!(coronas.coronas[0].id, 0);
+
+        register(&mut coronas);
+        coronas.coronas[0].off_screen = false;
+        coronas.update_with_time_step(1.0);
+        assert_eq!(coronas.coronas[0].fade_alpha, 15);
+        assert_eq!(coronas.coronas[0].id, 42);
+        register(&mut coronas);
+        coronas.coronas[0].off_screen = true;
+        coronas.update_with_time_step(1.0);
+        assert_eq!(coronas.coronas[0].fade_alpha, 0);
+        assert_eq!(coronas.coronas[0].id, 0);
     }
 }

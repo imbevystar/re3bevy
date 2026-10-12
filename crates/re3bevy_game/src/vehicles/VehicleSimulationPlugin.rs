@@ -152,6 +152,22 @@ impl Plugin for GtaVehicleSimulationPlugin {
             )
             .add_systems(
                 Update,
+                crate::vehicles::BoatControl::process_predator_gun_rounds
+                    .after(crate::vehicles::BoatControl::process_boat_control)
+                    .in_set(GtaProcessSet::World)
+                    .run_if(world_actor_processing_enabled)
+                    .run_if(in_state(GtaAppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                crate::vehicles::BoatControl::process_boat_driver_collision_speech
+                    .after(crate::vehicles::BoatControl::process_boat_control)
+                    .in_set(GtaProcessSet::World)
+                    .run_if(world_actor_processing_enabled)
+                    .run_if(in_state(GtaAppState::InGame)),
+            )
+            .add_systems(
+                Update,
                 process_automobile_damage_lifecycle
                     .after(sync_script_vehicle_occupants)
                     .in_set(GtaProcessSet::World)

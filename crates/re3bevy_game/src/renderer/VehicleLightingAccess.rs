@@ -2,7 +2,6 @@
 //!
 //! TODO(parity): CAutomobile::PreRender inactive FBI/rear corona coordinate
 //! updates, alarm range/reverse semantics and player directional/rear lights.
-//! TODO(parity): CBrightLights::RegisterOne front/rear automobile geometry.
 //! StoreCarLightShadow's transient projections are owned by Shadows and
 //! CarLightRender, including native receiver clipping and render state.
 
@@ -15,6 +14,72 @@ use crate::{
 };
 use bevy::{ecs::system::SystemParam, prelude::*};
 use re3bevy_core::core::Coordinates::CVector;
+
+/// CAutomobile::PreRender bulb admission, separate from coronas and ground shadows.
+/// Positions are the already-resolved authored right dummy and mirrored left dummy.
+pub(super) fn register_automobile_bright_lights(
+    fx: &mut crate::renderer::SpecialFX::CSpecialFX,
+    matrix: &crate::math::Matrix::CMatrix,
+    camera: CVector,
+    headlights: [CVector; 2],
+    taillights: [CVector; 2],
+    intact: [bool; 4],
+    handling: &crate::vehicles::HandlingMgr::tHandlingData,
+    lights_active: bool,
+    no_bright_headlights: bool,
+    abandoned_or_wrecked: bool,
+    behindness: f32,
+    gas: f32,
+    brake: f32,
+) {
+    use crate::renderer::SpecialFX::{BRIGHTLIGHT_FRONT, BRIGHTLIGHT_REAR};
+    let mut register_pair = |positions: [CVector; 2], ok: [bool; 2], shape: i8, base: u8| {
+        // handling.cfg defines 0..3; invalid data must not alias another lamp family.
+        if !(0..=3).contains(&shape) {
+            warn_once!(target: "re3bevy::vehicle_lighting", shape, "invalid native bulb shape in handling");
+            return;
+        }
+        for (position, intact) in positions.into_iter().zip(ok) {
+            if intact {
+                fx.register_bright_light(
+                    position,
+                    matrix.up,
+                    matrix.right,
+                    matrix.forward,
+                    base + shape as u8,
+                    camera,
+                );
+            }
+        }
+    };
+    if lights_active {
+        if !no_bright_headlights {
+            register_pair(
+                headlights,
+                [intact[0], intact[1]],
+                handling.front_lights,
+                BRIGHTLIGHT_FRONT,
+            );
+        }
+        register_pair(
+            taillights,
+            [intact[2], intact[3]],
+            handling.rear_lights,
+            BRIGHTLIGHT_REAR,
+        );
+    } else if !abandoned_or_wrecked && behindness > 0.0 && (brake > 0.0 || gas < 0.0) {
+        register_pair(
+            taillights,
+            [intact[2], intact[3]],
+            handling.rear_lights,
+            if gas < 0.0 {
+                BRIGHTLIGHT_FRONT
+            } else {
+                BRIGHTLIGHT_REAR
+            },
+        );
+    }
+}
 
 /// Executable roof-lamp layout from `CAutomobile::PreRender`'s model switch.
 pub(super) struct EmergencyLightLayout {
@@ -107,22 +172,72 @@ mod tests {
     use re3bevy_core::core::General::CGeneral;
 
     #[test]
+    fn bulbs_respect_damage_suppression_and_native_reverse_branch() {
+        use crate::{
+            math::Matrix::CMatrix, renderer::SpecialFX::CSpecialFX,
+            vehicles::HandlingMgr::tHandlingData,
+        };
+        let matrix = CMatrix::default();
+        let handling = tHandlingData {
+            front_lights: 3,
+            rear_lights: 1,
+            ..Default::default()
+        };
+        let heads = [CVector::new(-1.0, 2.0, 0.0), CVector::new(1.0, 2.0, 0.0)];
+        let tails = [CVector::new(-1.0, -2.0, 0.0), CVector::new(1.0, -2.0, 0.0)];
+        let mut fx = CSpecialFX::init();
+        let mut emit = |active, suppressed, retired, behind, gas, brake| {
+            fx.bright_light_render_intents.clear();
+            register_automobile_bright_lights(
+                &mut fx,
+                &matrix,
+                CVector::ZERO,
+                heads,
+                tails,
+                [true, false, false, true],
+                &handling,
+                active,
+                suppressed,
+                retired,
+                behind,
+                gas,
+                brake,
+            );
+            fx.bright_light_render_intents.clone()
+        };
+        let lit = emit(true, false, false, -1.0, -1.0, 0.0);
+        assert_eq!(
+            lit.iter()
+                .map(|i| (i.position, i.light_type))
+                .collect::<Vec<_>>(),
+            vec![(heads[0], 7), (tails[1], 9)]
+        );
+        assert_eq!(lit[0].front, matrix.forward);
+        assert_eq!(emit(true, true, false, -1.0, 0.0, 0.0).len(), 1);
+        assert_eq!(emit(false, false, false, 1.0, -1.0, 1.0)[0].light_type, 5);
+        assert_eq!(emit(false, false, false, 1.0, 0.0, 1.0)[0].light_type, 9);
+        assert!(emit(false, false, false, -1.0, -1.0, 1.0).is_empty());
+        assert!(emit(false, false, true, 1.0, -1.0, 1.0).is_empty());
+    }
+
+    #[test]
     fn lighting_borrows_damage_readonly_and_coexists_with_vitality_and_history_writes() {
         let mut world = World::new();
         world.init_resource::<ScriptEntityIndex>();
         world.init_resource::<VehicleLightingDiagnostics>();
         let mut general = CGeneral::with_seed(29);
         let handle = 0x501;
-        let (core, vitality, drive, appearance, entry, audio, car, audio_motion) = CAutomobile::new(
-            MI_POLICE as i32,
-            crate::vehicles::Vehicle::RANDOM_VEHICLE,
-            0,
-            &mut general,
-            None,
-            None,
-            false,
-        )
-        .into_parts();
+        let (core, vitality, drive, appearance, entry, audio, car, audio_motion) =
+            CAutomobile::new(
+                MI_POLICE as i32,
+                crate::vehicles::Vehicle::RANDOM_VEHICLE,
+                0,
+                &mut general,
+                None,
+                None,
+                false,
+            )
+            .into_parts();
         let entity = world
             .spawn((
                 ScriptVehicleIdentity {

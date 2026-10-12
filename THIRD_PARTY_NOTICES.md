@@ -38,17 +38,15 @@ Development has used these reverse-engineering projects as source references:
 
 Reference trees are optional local development inputs. They are not linked
 into the game binary and must not be copied into a source or binary release.
-The source exporter also omits the optional reference-derived C++ parity
-harness while preserving the local development copy. Excluding those inputs
-does not establish redistribution rights for material
-already translated into Rust, shaders or the C++ parity harness.
+Excluding those inputs does not establish redistribution rights for material
+already translated into Rust or shaders.
 
 Source reference comments record development provenance; they are not a claim
 of clean-room implementation. Reference-derived identifiers, tables and
 implementations, including `crates/re3bevy_game/src/core/MenuScreens.rs`,
-`MenuScreensCustom.rs`, `Pools.rs`, `audio/AudioSamples.rs` and
-`parity/cpp_harness/src/main.cpp`, need a provenance assessment. These examples
-are not a complete list or a finding that every referenced item is protected.
+`MenuScreensCustom.rs`, `Pools.rs` and `audio/AudioSamples.rs`, need a
+provenance assessment. These examples are not a complete list or a finding
+that every referenced item is protected.
 
 ## Vendored PL_MPEG
 

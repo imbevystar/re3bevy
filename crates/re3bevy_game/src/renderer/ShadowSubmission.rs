@@ -198,7 +198,7 @@ pub(super) fn flush_shadow_meshes(
         if alpha <= 0.0 {
             continue;
         }
-        let mesh_shadow = ScriptShadow {
+        let mut mesh_shadow = ScriptShadow {
             texture: 0,
             position: shadow.position,
             front: shadow.front,
@@ -207,6 +207,26 @@ pub(super) fn flush_shadow_meshes(
             color: shadow.color,
             corners: None,
         };
+        // re3 GeneratePolysForStaticShadow projects the lamp/traffic-light
+        // texture onto nearby collision polygons, *below* the bulb. Drawing
+        // the authored quad at the light's z made the road stay black even
+        // when the 2dfx light was registered. Adapt the projection to the
+        // native static-world vertical-line query, sampling each corner so
+        // ramps also receive their ground glow.
+        let top = shadow.position.z + 0.2;
+        let bottom = shadow.position.z - 15.0;
+        let project = |x: f32, y: f32| {
+            file_loader.world.process_vertical_line_static(
+                [x, y, top], bottom, &file_loader.model_info,
+            ).map(|hit| hit.point.z)
+        };
+        let Some(center_ground) = project(shadow.position.x, shadow.position.y) else {
+            continue;
+        };
+        mesh_shadow.corners = Some(shadow_corners(&mesh_shadow).map(|mut vertex| {
+            vertex.z = project(vertex.x, vertex.y).unwrap_or(center_ground) + 0.03;
+            vertex
+        }));
         let colour = Color::srgba_u8(
             shadow.color[0],
             shadow.color[1],

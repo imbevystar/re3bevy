@@ -1563,6 +1563,8 @@ fn process_second_player_vehicle(
                     CAutomobileDriveStepInput {
                         control: CAutomobileControlInput {
                             steering_left_right: pad.get_steering_left_right() as f32,
+                            mouse_x: 0.0,
+                            mouse_steering: false,
                             accelerate: pad.get_accelerate() as f32,
                             brake: pad.get_brake() as f32,
                             handbrake: pad.get_hand_brake() != 0,

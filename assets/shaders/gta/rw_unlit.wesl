@@ -1,7 +1,7 @@
 import bevy_render::view::View;
 import bevy_pbr::render::mesh_types::Mesh;
 import bevy_pbr::render::forward_io::VertexOutput;
-import super::rw_unlit_util::{GtaGlobalLighting, apply_colour_filter_iii, apply_fog, linear_to_rw_rgb, rw_to_linear_rgb};
+import super::rw_unlit_util::{GtaGlobalLighting, apply_fog, linear_to_rw_rgb, rw_target_rgb, rw_object_local_lights};
 
 @if(BINDLESS)
 enable wgpu_binding_array;
@@ -15,6 +15,7 @@ struct GtaUnlitUniforms {
     surface: vec4<f32>,
     light_direction_and_prelit: vec4<f32>,
     lighting_options: vec4<f32>,
+    actor_origin: vec4<f32>,
 }
 
 // Non-bindless backends retain the original material layout.
@@ -84,17 +85,32 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
         let diffuse = max(dot(normal, sun), 0.0);
         // C3dMarker::Render installs SetBrightMarkerColours around its draw.
         var ambient = global_lighting.ambient.rgb;
+        if material.lighting_options.x > 1.0 {
+            ambient = global_lighting.actor_ambient.rgb / material.lighting_options.x;
+        }
         var directional = global_lighting.directional.rgb;
         if material.lighting_options.z > 0.5 {
             ambient = vec3<f32>(0.6);
             directional = (vec3<f32>(1.0) - directional) * 0.4 + directional;
         }
-        let rw_light =
+        var rw_light =
             source_colour.rgb * has_prelight
             + ambient
                 * (material.surface.x * material.lighting_options.x)
             + directional
                 * (material.surface.y * diffuse * material.lighting_options.y);
+        if material.lighting_options.w > 0.5 {
+            let origin = select(mesh.world_position.xyz, material.actor_origin.xyz, material.actor_origin.w > 0.5);
+            let local = rw_object_local_lights(global_lighting, origin, normal);
+            if local.w != 1.0 {
+                // SetupLighting replaces ambient/direct colours only; DFF
+                // prelight and the extra directional lights are untouched.
+                rw_light = source_colour.rgb * has_prelight
+                    + global_lighting.ambient.rgb * (material.surface.x * local.w)
+                    + directional * (material.surface.y * diffuse * material.lighting_options.y * local.w);
+            }
+            rw_light += local.rgb * material.surface.y;
+        }
         let clamped_light = clamp(rw_light, vec3<f32>(0.0), vec3<f32>(1.0));
         // Arena's resident vehicle batching stores the original RW material
         // colour in the vertex stream for mode 2. re3's default_UV2_VS first
@@ -125,10 +141,6 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    if material.flags.z > 0.5 {
-        // Additive: scale RGB by alpha for Add blend.
-        lit = vec4<f32>(lit.rgb * lit.a, lit.a);
-    }
-    lit = apply_colour_filter_iii(lit, global_lighting.postfx_blur_colour);
-    return vec4<f32>(rw_to_linear_rgb(lit.rgb), lit.a);
+    // PASS_ADD's pipeline applies SRCALPHA/ONE; do not premultiply here.
+    return vec4<f32>(rw_target_rgb(lit.rgb), lit.a);
 }

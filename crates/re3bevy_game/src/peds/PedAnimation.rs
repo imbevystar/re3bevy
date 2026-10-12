@@ -176,6 +176,35 @@ impl PedAnimation {
         }
         true
     }
+
+    /// CPed::PedSetOutCarCB / PedSetDraggedOutCarCB restart non-partial
+    /// associations when the occupant leaves the seat. The vehicle get-out
+    /// sequence lives in CPedVehicleAnimation; its former CAR_SIT association
+    /// must no longer contribute to the on-foot clump after that callback.
+    pub(crate) fn finish_vehicle_exit(&mut self) {
+        use crate::animation::AnimationId::{
+            ANIM_STD_CAR_SIT, ANIM_STD_CAR_SIT_LO, ANIM_STD_CAR_SIT_P,
+            ANIM_STD_CAR_SIT_P_LO,
+        };
+        let clump = &mut self.movement_anim_clump;
+        clump.associations.retain(|association| {
+            let is_seated = matches!(
+                association.anim_id,
+                ANIM_STD_CAR_SIT | ANIM_STD_CAR_SIT_LO
+                    | ANIM_STD_CAR_SIT_P | ANIM_STD_CAR_SIT_P_LO
+            );
+            let is_stale_fade = !association.is_partial()
+                && association.blend_delta < 0.0
+                && association.flags
+                    & crate::animation::AnimBlendAssociation::ASSOC_DELETEFADEDOUT != 0;
+            !is_seated && !is_stale_fade
+        });
+        for association in &mut clump.associations {
+            if !association.is_partial() {
+                association.set_run();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -262,6 +291,35 @@ mod tests {
             "reentry revives the original seat association"
         );
         assert_eq!(animation.movement_anim_clump.associations.len(), 1);
+    }
+
+    #[test]
+    fn vehicle_exit_retires_frozen_seat_and_restarts_on_foot_animation() {
+        use crate::animation::{
+            AnimBlendAssociation::{ASSOC_DELETEFADEDOUT, ASSOC_RUNNING},
+            AnimationId::{ANIM_STD_CAR_SIT_P, ANIM_STD_IDLE, ANIM_STD_WALK},
+        };
+        let manager = manager_with_association(ANIM_STD_CAR_SIT_P, ASSOC_RUNNING);
+        let mut animation = PedAnimation::default();
+        assert!(animation.install_seated_pose(&manager, true, false));
+        let mut idle = animation.movement_anim_clump.associations[0].clone();
+        idle.anim_id = ANIM_STD_IDLE;
+        idle.blend_amount = 0.35;
+        idle.blend_delta = -4.0;
+        idle.flags |= ASSOC_DELETEFADEDOUT;
+        let mut walk = idle.clone();
+        walk.anim_id = ANIM_STD_WALK;
+        walk.blend_amount = 0.5;
+        walk.blend_delta = 0.0;
+        walk.flags &= !ASSOC_DELETEFADEDOUT;
+        animation.movement_anim_clump.associations.extend([idle, walk]);
+
+        animation.finish_vehicle_exit();
+
+        assert_eq!(animation.movement_anim_clump.associations.len(), 1);
+        let walk = &animation.movement_anim_clump.associations[0];
+        assert_eq!(walk.anim_id, ANIM_STD_WALK);
+        assert!(walk.is_running());
     }
 
     #[test]

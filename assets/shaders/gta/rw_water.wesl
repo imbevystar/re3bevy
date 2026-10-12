@@ -1,6 +1,6 @@
 import bevy_render::view::View;
 import bevy_pbr::render::forward_io::VertexOutput;
-import super::rw_unlit_util::{GtaGlobalLighting, apply_colour_filter_iii, apply_fog, linear_to_rw_rgb, rw_to_linear_rgb};
+import super::rw_unlit_util::{GtaGlobalLighting, apply_fog, linear_to_rw_rgb, rw_target_rgb};
 
 @group(0) @binding(0) var<uniform> gta_view: View;
 
@@ -27,6 +27,5 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let view_depth = -(gta_view.view_from_world * mesh.world_position).z;
     let f = clamp((view_depth - fog_start) / max(far_clip - fog_start, 0.00001), 0.0, 1.0);
     let fogged = apply_fog(water_colour, global_lighting.fog_colour_and_start.rgb, f);
-    let filtered = apply_colour_filter_iii(fogged, postfx_blur_colour);
-    return vec4<f32>(rw_to_linear_rgb(filtered.rgb), filtered.a);
+    return vec4<f32>(rw_target_rgb(fogged.rgb), fogged.a);
 }

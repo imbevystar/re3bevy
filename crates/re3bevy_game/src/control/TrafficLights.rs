@@ -159,13 +159,27 @@ impl CTrafficLights {
         path_find: &CPathFind,
         vehicle: &CTrafficVehicleState,
     ) -> bool {
+        Self::should_car_stop_for_bridge_links(
+            path_find,
+            vehicle.next_path_node_info,
+            vehicle.current_path_node_info,
+        )
+    }
+
+    /// The bridge check only needs the two path-link identities. Keep it
+    /// available to the ECS car-AI paths without rebuilding a traffic snapshot.
+    pub fn should_car_stop_for_bridge_links(
+        path_find: &CPathFind,
+        next_path_node_info: usize,
+        current_path_node_info: usize,
+    ) -> bool {
         let next = path_find
             .car_path_links
-            .get(vehicle.next_path_node_info)
+            .get(next_path_node_info)
             .is_some_and(|link| link.bridge_lights);
         let current = path_find
             .car_path_links
-            .get(vehicle.current_path_node_info)
+            .get(current_path_node_info)
             .is_some_and(|link| link.bridge_lights);
         next && !current
     }
@@ -376,6 +390,29 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::PathFind::CCarPathLink;
+
+    #[test]
+    fn bridge_holds_cars_entering_a_closed_link_only() {
+        let mut paths = CPathFind::default();
+        paths.car_path_links = vec![
+            CCarPathLink {
+                pos: [0.0; 2], dir: [0.0; 2], path_node_index: 0,
+                num_left_lanes: 0, num_right_lanes: 0,
+                traffic_light_type: 0, bridge_lights: false,
+            },
+            CCarPathLink {
+                pos: [0.0; 2], dir: [0.0; 2], path_node_index: 1,
+                num_left_lanes: 0, num_right_lanes: 0,
+                traffic_light_type: 0, bridge_lights: true,
+            },
+        ];
+        assert!(CTrafficLights::should_car_stop_for_bridge_links(&paths, 1, 0));
+        assert!(!CTrafficLights::should_car_stop_for_bridge_links(&paths, 0, 1));
+        assert!(!CTrafficLights::should_car_stop_for_bridge_links(&paths, 1, 1));
+        paths.car_path_links[1].bridge_lights = false;
+        assert!(!CTrafficLights::should_car_stop_for_bridge_links(&paths, 1, 0));
+    }
 
     #[test]
     fn light_phase_boundaries_match_re3() {

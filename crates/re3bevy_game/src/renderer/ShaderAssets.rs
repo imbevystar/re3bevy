@@ -13,6 +13,14 @@ pub const RW_WATER: Handle<Shader> =
     bevy::asset::uuid_handle!("ac07a005-30b2-443f-8d31-6355a16272ee");
 pub const PARTICLE_SPRITE: Handle<Shader> =
     bevy::asset::uuid_handle!("ac07a006-30b2-443f-8d31-6355a16272ee");
+pub const RW_POSTFX: Handle<Shader> =
+    bevy::asset::uuid_handle!("ac07a007-30b2-443f-8d31-6355a16272ee");
+pub const RW_SCREEN_DROPLET: Handle<Shader> =
+    bevy::asset::uuid_handle!("ac07a008-30b2-443f-8d31-6355a16272ee");
+pub const RW_NEO: Handle<Shader> =
+    bevy::asset::uuid_handle!("ac07a009-30b2-443f-8d31-6355a16272ee");
+pub const RW_PC_ENVMAP: Handle<Shader> =
+    bevy::asset::uuid_handle!("ac07a00a-30b2-443f-8d31-6355a16272ee");
 
 pub struct GtaShaderAssetsPlugin;
 
@@ -39,7 +47,11 @@ impl Plugin for GtaShaderAssetsPlugin {
         register!(RW_WATER, "rw_water.wesl");
         register!(PARTICLE_SPRITE, "particle_sprite.wesl");
         register!(super::HudBevy::radar::RADAR_SHADER, "hud_radar.wesl");
-        info!(target: "gta_assets", "registered 6 program-owned WESL shaders; no external shader directory required");
+        register!(RW_POSTFX, "rw_postfx.wesl");
+        register!(RW_SCREEN_DROPLET, "rw_screen_droplet.wesl");
+        register!(RW_NEO, "rw_neo.wesl");
+        register!(RW_PC_ENVMAP, "rw_pc_envmap.wesl");
+        info!(target: "gta_assets", "registered 10 program-owned WESL shaders; no external shader directory required");
     }
 }
 
@@ -54,7 +66,7 @@ mod tests {
             .add_plugins(GtaShaderAssetsPlugin);
         let shaders = app.world().resource::<Assets<Shader>>();
         for handle in [RW_UNLIT_UTIL, RW_UNLIT, RW_SKY, RW_WATER, PARTICLE_SPRITE,
-            super::super::HudBevy::radar::RADAR_SHADER] {
+            super::super::HudBevy::radar::RADAR_SHADER, RW_POSTFX, RW_SCREEN_DROPLET, RW_NEO, RW_PC_ENVMAP] {
             let shader = shaders.get(&handle).expect("embedded program shader");
             assert!(matches!(shader.source, bevy::shader::Source::Wesl(_)));
             assert!(shader.path.starts_with("shaders/gta/"));

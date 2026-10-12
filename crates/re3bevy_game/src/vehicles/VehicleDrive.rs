@@ -10,6 +10,8 @@ pub struct VehicleDriveState {
     pub current_gear: u8,
     pub change_gear_time: f32,
     pub steer_input: f32,
+    /// The previous steering device, for re3's mouse steering hold/keyboard fallback.
+    pub mouse_steering_active: bool,
     pub comedy_control_state: i8,
     pub engine_on: bool,
     pub is_handbrake_on: bool,
@@ -25,6 +27,7 @@ impl Default for VehicleDriveState {
             current_gear: 1,
             change_gear_time: 0.0,
             steer_input: 0.0,
+            mouse_steering_active: false,
             comedy_control_state: 0,
             engine_on: true,
             is_handbrake_on: false,

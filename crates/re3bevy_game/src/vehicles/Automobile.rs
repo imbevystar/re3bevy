@@ -553,6 +553,9 @@ pub struct CAutomobileHandlingSnapshot {
 pub struct CAutomobileControlInput {
     /// re3 `GetSteeringLeftRight`, in the original -128..128 range.
     pub steering_left_right: f32,
+    /// re3 `GetMouseX` raw horizontal motion; used when PC mouse steering is enabled.
+    pub mouse_x: f32,
+    pub mouse_steering: bool,
     /// re3 `GetAccelerate`, in the original 0..255 range.
     pub accelerate: f32,
     /// re3 `GetBrake`, in the original 0..255 range.
@@ -1154,7 +1157,6 @@ impl<
     /// Direct state port of re3 `CAutomobile::ProcessControlInputs`.
     ///
     /// Deterministic pad input branch used by gameplay and the developer arena.
-    /// TODO(parity): CAutomobile::ProcessControlInputs complete mouse steering.
     pub fn process_control_inputs(
         &mut self,
         input: CAutomobileControlInput,
@@ -1168,9 +1170,24 @@ impl<
 
         self.vehicle.drive.is_handbrake_on = input.exit_vehicle || input.handbrake;
 
-        let target_steer = -input.steering_left_right / 128.0;
-        self.vehicle.drive.steer_input +=
-            (target_steer - self.vehicle.drive.steer_input) * 0.2 * time_step.max(0.0);
+        // re3 Automobile.cpp ProcessControlInputs: mouse motion takes priority.
+        // When the mouse was the last steering device, idle frames hold the
+        // current wheel angle until keyboard/pad steering resumes.
+        if input.mouse_steering && input.mouse_x != 0.0 {
+            self.vehicle.drive.steer_input -= 0.0035 * input.mouse_x;
+            self.vehicle.drive.mouse_steering_active = true;
+            if self.vehicle.drive.steer_input.abs() < 0.35 {
+                self.vehicle.drive.steer_input *= 0.975_f32.powf(time_step);
+            }
+        } else if !input.mouse_steering
+            || input.steering_left_right != 0.0
+            || !self.vehicle.drive.mouse_steering_active
+        {
+            let target_steer = -input.steering_left_right / 128.0;
+            self.vehicle.drive.steer_input +=
+                (target_steer - self.vehicle.drive.steer_input) * 0.2 * time_step.max(0.0);
+            self.vehicle.drive.mouse_steering_active = false;
+        }
         self.vehicle.drive.steer_input = self.vehicle.drive.steer_input.clamp(-1.0, 1.0);
 
         let mut acceleration = (input.accelerate - input.brake) / 255.0;
@@ -2570,6 +2587,42 @@ mod tests {
             1.0,
         );
         assert!(car.doors[2].is_closed());
+    }
+
+    #[test]
+    fn mouse_steering_holds_on_idle_and_returns_to_keyboard_control() {
+        let mut general = CGeneral::with_seed(1);
+        let mut car = CAutomobile::new(90, 2, 0, &mut general, None, None, false);
+        let handling = tHandlingData { steering_lock: 30.0, ..Default::default() };
+        car.process_control_inputs(
+            CAutomobileControlInput {
+                mouse_x: 40.0, mouse_steering: true, ..Default::default()
+            }, &handling, 1.0, &mut general,
+        );
+        let mouse_angle = -0.0035 * 40.0 * 0.975;
+        assert!((car.vehicle.drive.steer_input - mouse_angle).abs() < 1.0e-6);
+        assert!(car.vehicle.drive.mouse_steering_active);
+
+        car.process_control_inputs(
+            CAutomobileControlInput { mouse_steering: true, ..Default::default() },
+            &handling, 1.0, &mut general,
+        );
+        assert!((car.vehicle.drive.steer_input - mouse_angle).abs() < 1.0e-6);
+
+        car.process_control_inputs(
+            CAutomobileControlInput {
+                steering_left_right: -128.0, mouse_steering: true, ..Default::default()
+            }, &handling, 1.0, &mut general,
+        );
+        let keyboard_angle = mouse_angle + (1.0 - mouse_angle) * 0.2;
+        assert!((car.vehicle.drive.steer_input - keyboard_angle).abs() < 1.0e-6);
+        assert!(!car.vehicle.drive.mouse_steering_active);
+
+        car.process_control_inputs(
+            CAutomobileControlInput { mouse_steering: true, ..Default::default() },
+            &handling, 1.0, &mut general,
+        );
+        assert!((car.vehicle.drive.steer_input - keyboard_angle * 0.8).abs() < 1.0e-6);
     }
 
     #[test]
@@ -4339,6 +4392,8 @@ pub(crate) fn process_passive_automobile_physics(
             CAutomobileDriveStepInput {
                 control: CAutomobileControlInput {
                     steering_left_right,
+                    mouse_x: 0.0,
+                    mouse_steering: false,
                     accelerate,
                     brake,
                     handbrake,

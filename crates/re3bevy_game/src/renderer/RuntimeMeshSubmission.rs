@@ -23,6 +23,7 @@ use crate::{
 use bevy::prelude::*;
 use re3bevy_core::core::{GameState::GtaAppState, Schedules::GtaProcessSet, Timer::CTimer};
 use std::collections::{BTreeMap, BTreeSet};
+use crate::renderer::PcMatFxRender::{GtaOriginalMaterial, GtaPcEnvSurface};
 
 pub(super) struct RuntimeMeshSubmissionPlugin;
 
@@ -40,6 +41,7 @@ impl Plugin for RuntimeMeshSubmissionPlugin {
         app.init_resource::<GtaRuntimeMeshRefresh>()
             .init_resource::<GtaAnimatedRuntimeMeshRegistry>()
             .init_resource::<GtaRuntimeSubmissionDiagnostics>()
+            .add_systems(OnEnter(GtaAppState::LoadingGame), reset_runtime_pool_meshes)
             .add_systems(
                 Update,
                 (
@@ -47,6 +49,7 @@ impl Plugin for RuntimeMeshSubmissionPlugin {
                     flush_runtime_pool_meshes,
                     cleanup_stale_static_runtime_pool_meshes,
                     cleanup_animated_runtime_pool_meshes,
+                    sync_runtime_actor_lighting_origins,
                 )
                     .chain()
                     .after(request_radar_sections_after_world_render)
@@ -66,6 +69,24 @@ pub(super) struct GtaRuntimeMeshRefresh {
     /// renderer cadence.  The next render-prep pass must rebuild immediately
     /// so the object is not invisible until an unrelated cadence tick.
     pub(super) force_rebuild: bool,
+}
+
+/// SetupLighting selects local lights once at the actor root, independently
+/// of the wheel/door/bone frame used by each resident atomic.
+fn sync_runtime_actor_lighting_origins(
+    registry: Res<GtaAnimatedRuntimeMeshRegistry>,
+    mut materials: ResMut<Assets<GtaUnlitMaterial>>,
+) {
+    for slot in registry.slots.values() {
+        let origin = slot.rendered_root_transform.translation.extend(1.0);
+        for handle in &slot.materials {
+            if materials.get(handle).is_some_and(|m| m.uniforms.actor_origin != origin)
+                && let Some(mut material) = materials.get_mut(handle)
+            {
+                material.uniforms.actor_origin = origin;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -160,6 +181,46 @@ pub(super) struct GtaAnimatedRuntimeMeshSlot {
     pub(super) is_visible: bool,
 }
 
+/// Pool handles and special-model indices can be reused by the next New Game.
+/// Retire the old RenderWare clump mirrors before any newly loaded actors
+/// acquire the same key, even if no 30 Hz refresh has happened yet.
+fn reset_runtime_pool_meshes(
+    mut commands: Commands,
+    mut registry: ResMut<GtaAnimatedRuntimeMeshRegistry>,
+    mut refresh: ResMut<GtaRuntimeMeshRefresh>,
+    existing: Query<(Entity, &Mesh3d, &GtaOriginalMaterial), With<GtaRuntimePoolMesh>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<GtaUnlitMaterial>>,
+) {
+    let mut retired = BTreeSet::new();
+    for (entity, mesh, material) in &existing {
+        retired.insert(entity);
+        commands.entity(entity).despawn();
+        meshes.remove(mesh.0.id());
+        materials.remove(material.0.id());
+    }
+    // Each animated slot owns the source mesh/material handles; the live
+    // entities above may share those handles with their registry entry.
+    for slot in registry.slots.values() {
+        for entity in &slot.entities {
+            if retired.insert(*entity) {
+                commands.entity(*entity).despawn();
+            }
+        }
+        for mesh in &slot.meshes {
+            meshes.remove(mesh.id());
+        }
+        for material in &slot.materials {
+            materials.remove(material.id());
+        }
+    }
+    *registry = GtaAnimatedRuntimeMeshRegistry::default();
+    *refresh = GtaRuntimeMeshRefresh {
+        force_rebuild: true,
+        ..default()
+    };
+}
+
 pub(super) fn prepare_runtime_pool_mesh_refresh(
     mut refresh: ResMut<GtaRuntimeMeshRefresh>,
     mut animated_registry: ResMut<GtaAnimatedRuntimeMeshRegistry>,
@@ -170,7 +231,7 @@ pub(super) fn prepare_runtime_pool_mesh_refresh(
             Entity,
             &GtaRuntimePoolMesh,
             &Mesh3d,
-            &MeshMaterial3d<GtaUnlitMaterial>,
+            &GtaOriginalMaterial,
         ),
         With<GtaRuntimePoolMesh>,
     >,
@@ -232,6 +293,38 @@ pub(super) fn runtime_mesh_refresh_due(
 #[cfg(test)]
 mod runtime_mesh_refresh_tests {
     use super::*;
+
+    #[test]
+    fn new_game_retires_old_actor_draws_before_pool_handles_are_reused() {
+        let mut app = App::new();
+        app.init_resource::<GtaAnimatedRuntimeMeshRegistry>()
+            .init_resource::<GtaRuntimeMeshRefresh>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<GtaUnlitMaterial>>()
+            .add_systems(Update, reset_runtime_pool_meshes);
+        let key = animated_runtime_mesh_key(GtaRuntimePoolMeshSource::ScriptPed, 7, 2);
+        app.world_mut().resource_mut::<GtaAnimatedRuntimeMeshRegistry>()
+            .touched.insert(key);
+        let old_draw = app.world_mut().spawn((
+            GtaRuntimePoolMesh {
+                source: GtaRuntimePoolMeshSource::ScriptPed,
+                slot: 7,
+                model_index: 2,
+                render_damaged: false,
+            },
+            Mesh3d(Handle::default()),
+            // A PC MatFX swap removes the original draw component. New Game
+            // must still retire it through the canonical material owner.
+            MeshMaterial3d::<crate::renderer::PcMatFxRender::GtaPcEnvMaterial>(Handle::default()),
+            GtaOriginalMaterial(Handle::default()),
+        )).id();
+
+        app.update();
+        assert!(app.world().get_entity(old_draw).is_err());
+        let registry = app.world().resource::<GtaAnimatedRuntimeMeshRegistry>();
+        assert!(registry.slots.is_empty() && registry.touched.is_empty());
+        assert!(app.world().resource::<GtaRuntimeMeshRefresh>().force_rebuild);
+    }
 
     #[test]
     fn moving_vehicles_use_the_persistent_mesh_registry() {
@@ -299,6 +392,7 @@ mod runtime_mesh_refresh_tests {
                 },
                 Mesh3d(Handle::default()),
                 MeshMaterial3d::<GtaUnlitMaterial>(Handle::default()),
+                GtaOriginalMaterial(Handle::default()),
                 Visibility::Visible,
             ))
             .id();
@@ -390,7 +484,7 @@ pub(super) fn cleanup_stale_static_runtime_pool_meshes(
             Entity,
             &GtaRuntimePoolMesh,
             &Mesh3d,
-            &MeshMaterial3d<GtaUnlitMaterial>,
+            &GtaOriginalMaterial,
             &mut Visibility,
         ),
         With<GtaRuntimePoolMesh>,
@@ -1207,7 +1301,7 @@ pub(super) fn flush_runtime_pool_meshes(
         ensure_colour_texture_table(&mut texture_cache, &mut images, table);
     }
     ensure_environment_maps(&file_loader, &mut texture_cache);
-    let fog = timecycle
+    let base_fog = timecycle
         .as_ref()
         .map(|tc| {
             let c = &tc.current;
@@ -1229,8 +1323,9 @@ pub(super) fn flush_runtime_pool_meshes(
                 directional_enabled: true,
             }
         })
-        .unwrap_or_default()
-        .for_peds_cars_and_objects();
+        .unwrap_or_default();
+    let fog = base_fog.for_peds_cars_and_objects();
+    let object_fog = base_fog.without_directional();
     let camera_gta = file_loader.renderer.camera_position;
 
     // Live player after CREATE_PLAYER (re3 CWorld::Players[] → render).
@@ -1898,7 +1993,7 @@ pub(super) fn flush_runtime_pool_meshes(
                 &mut materials,
                 &mut world_stats,
                 camera_gta,
-                fog,
+                object_fog,
             );
         }
     }
@@ -2012,7 +2107,7 @@ pub(super) fn flush_runtime_pool_meshes(
                 &mut materials,
                 &mut world_stats,
                 camera_gta,
-                fog,
+                object_fog,
             );
         }
     }
@@ -2309,6 +2404,9 @@ pub(super) fn spawn_or_update_dynamic_runtime_mesh(
         }
         for (part, drawable) in drawables.into_iter().enumerate() {
             let named_texture = drawable.texture_name.is_some();
+            update_pc_environment_surface(commands, cached.entities[part], &drawable, model_index, file_loader);
+            commands.entity(cached.entities[part]).insert(
+                crate::renderer::NeoRender::surface_for_drawable(&drawable, file_loader, texture_cache));
             let refreshed_material = resolve_drawable_material_bind(
                 &drawable,
                 file_loader,
@@ -2418,6 +2516,8 @@ pub(super) fn spawn_or_update_dynamic_runtime_mesh(
         } else if drawable.texture_name.is_some() {
             stats.skipped_missing_texture += 1;
         }
+        let neo_surface = crate::renderer::NeoRender::surface_for_drawable(&drawable, file_loader, texture_cache);
+        let pc_surface = crate::renderer::PcMatFxRender::surface_for_drawable(&drawable, model_index, file_loader);
         let mesh = meshes.add(drawable.mesh);
         let material_asset = gta_world_material(
             base_color,
@@ -2439,6 +2539,7 @@ pub(super) fn spawn_or_update_dynamic_runtime_mesh(
         let entity = commands
             .spawn((
                 GtaImmediateMesh,
+                neo_surface,
                 GtaRuntimePoolMesh {
                     source,
                     slot,
@@ -2448,6 +2549,7 @@ pub(super) fn spawn_or_update_dynamic_runtime_mesh(
                 },
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material.clone()),
+                GtaOriginalMaterial(material.clone()),
                 // Vehicle/ped visibility is decided by the GTA render path.
                 // Their RenderWare frames are rebuilt independently of Bevy's
                 // transform propagation, so a second mesh-AABB frustum test
@@ -2459,6 +2561,9 @@ pub(super) fn spawn_or_update_dynamic_runtime_mesh(
                 GlobalTransform::default(),
             ))
             .id();
+        if let Some(surface) = pc_surface {
+            commands.entity(entity).insert(surface);
+        }
         cached.entities.push(entity);
         cached.meshes.push(mesh);
         cached.materials.push(material);
@@ -2532,9 +2637,18 @@ pub(super) fn spawn_runtime_pool_mesh(
         } else if drawable.texture_name.is_some() {
             stats.skipped_missing_texture += 1;
         }
-        let _ = (drawable.specular, texture_cache.env_map.as_ref());
-        commands.spawn((
+        let pc_surface = crate::renderer::PcMatFxRender::surface_for_drawable(&drawable, model_index, file_loader);
+        let mut material_asset = gta_world_material(
+            base_color, base_color_texture, texture_alpha, additive,
+            drawable.surface_ambient, drawable.surface_diffuse, drawable.has_prelit, lighting,
+        );
+        // Replay/static runtime draws do not have an animated registry slot.
+        // SetupLighting still selects their extra lights at the clump root.
+        material_asset.uniforms.actor_origin = transform.translation.extend(1.0);
+        let material = materials.add(material_asset);
+        let entity = commands.spawn((
             GtaImmediateMesh,
+            crate::renderer::NeoRender::surface_for_drawable(&drawable, file_loader, texture_cache),
             GtaRuntimePoolMesh {
                 source,
                 slot,
@@ -2542,21 +2656,16 @@ pub(super) fn spawn_runtime_pool_mesh(
                 render_damaged,
             },
             Mesh3d(meshes.add(drawable.mesh)),
-            MeshMaterial3d(materials.add(gta_world_material(
-                base_color,
-                base_color_texture,
-                texture_alpha,
-                additive,
-                drawable.surface_ambient,
-                drawable.surface_diffuse,
-                drawable.has_prelit,
-                lighting,
-            ))),
+            MeshMaterial3d(material.clone()),
+            GtaOriginalMaterial(material),
             NoFrustumCulling,
             Visibility::Visible,
             transform,
             GlobalTransform::default(),
-        ));
+        )).id();
+        if let Some(surface) = pc_surface {
+            commands.entity(entity).insert(surface);
+        }
     }
 }
 
@@ -2834,6 +2943,8 @@ pub(super) fn spawn_animated_ped_pool_mesh(
         if base_color_texture.is_some() {
             stats.textured_meshes += 1;
         }
+        let neo_surface = crate::renderer::NeoRender::surface_for_drawable(&drawable, file_loader, texture_cache);
+        let pc_surface = crate::renderer::PcMatFxRender::surface_for_drawable(&drawable, model_index, file_loader);
         let mesh = meshes.add(drawable.mesh);
         let material_asset = gta_world_material(
             base_color,
@@ -2855,6 +2966,7 @@ pub(super) fn spawn_animated_ped_pool_mesh(
         let entity = commands
             .spawn((
                 GtaImmediateMesh,
+                neo_surface,
                 GtaRuntimePoolMesh {
                     source,
                     slot,
@@ -2863,6 +2975,7 @@ pub(super) fn spawn_animated_ped_pool_mesh(
                 },
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material.clone()),
+                GtaOriginalMaterial(material.clone()),
                 NoFrustumCulling,
                 Visibility::Visible,
                 rigid_part_transforms
@@ -2873,6 +2986,9 @@ pub(super) fn spawn_animated_ped_pool_mesh(
                 GlobalTransform::default(),
             ))
             .id();
+        if let Some(surface) = pc_surface {
+            commands.entity(entity).insert(surface);
+        }
         cached.entities.push(entity);
         cached.meshes.push(mesh);
         cached.materials.push(material);
@@ -2887,6 +3003,20 @@ pub(super) fn spawn_animated_ped_pool_mesh(
     registry.slots.insert(key, cached);
 }
 
+
+fn update_pc_environment_surface(
+    commands: &mut Commands,
+    entity: Entity,
+    drawable: &ModelMaterialDrawable,
+    model_index: usize,
+    loader: &CFileLoader,
+) {
+    if let Some(surface) = crate::renderer::PcMatFxRender::surface_for_drawable(drawable, model_index, loader) {
+        commands.entity(entity).insert(surface);
+    } else {
+        commands.entity(entity).remove::<GtaPcEnvSurface>();
+    }
+}
 
 pub(super) fn runtime_model_geometry_signature(
     file_loader: &CFileLoader,

@@ -47,6 +47,10 @@ pub(crate) struct WeaponActorAccess<'w, 's> {
 }
 
 impl WeaponActorAccess<'_, '_> {
+    pub(crate) fn vehicle_entity(&self, handle: i32) -> Option<Entity> {
+        self.index.vehicle(handle)
+    }
+
     pub(crate) fn ped_handle_for_slot(&self, slot: usize) -> Option<i32> {
         self.index.ped_handle_for_slot(slot)
     }

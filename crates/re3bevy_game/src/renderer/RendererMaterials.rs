@@ -80,9 +80,17 @@ pub fn classify_rw_texture_alpha(declared_has_alpha: bool, rgba: &[u8]) -> RwTex
 pub struct GtaGlobalLighting {
     pub fog_colour_and_start: Vec4,
     pub ambient: Vec4,
+    pub actor_ambient: Vec4,
     pub directional: Vec4,
     pub light_direction_and_far_clip: Vec4,
     pub postfx_blur_colour: Vec4,
+    /// CPointLights::GenerateLightsAffectingObject inputs, in Bevy coordinates.
+    /// xyz=origin, w=radius; colour.w is the original light type.
+    pub local_light_positions: [Vec4; 32],
+    pub local_light_colours: [Vec4; 32],
+    pub local_light_directions: [Vec4; 32],
+    /// x=number of active lights, capped by re3 NUMPOINTLIGHTS.
+    pub local_light_count: Vec4,
 }
 
 impl Default for GtaGlobalLighting {
@@ -90,9 +98,14 @@ impl Default for GtaGlobalLighting {
         Self {
             fog_colour_and_start: Vec4::new(0.5, 0.5, 0.55, 2_500.0),
             ambient: Vec4::ONE,
+            actor_ambient: Vec4::ONE,
             directional: Vec4::ZERO,
             light_direction_and_far_clip: Vec4::new(0.0, 0.0, 1.0, 2_500.0),
             postfx_blur_colour: Vec4::new(1.0, 1.0, 1.0, 0.0),
+            local_light_positions: [Vec4::ZERO; 32],
+            local_light_colours: [Vec4::ZERO; 32],
+            local_light_directions: [Vec4::ZERO; 32],
+            local_light_count: Vec4::ZERO,
         }
     }
 }
@@ -138,6 +151,8 @@ pub struct GtaUnlitUniforms {
     pub light_direction_and_prelit: Vec4,
     /// x=ambient multiplier, y=directional enabled.
     pub lighting_options: Vec4,
+    /// Canonical actor root for SetupLighting; w=1 when supplied by runtime.
+    pub actor_origin: Vec4,
 }
 
 /// re3-style unlit world/vehicle material: base colour × texture × vertex colour × fog.
@@ -159,6 +174,109 @@ pub struct GtaUnlitMaterial {
     /// Cover subpixel cracks in separately authored static-world surfaces.
     /// Enabled only when the backend exposes conservative rasterization.
     pub conservative_coverage: bool,
+}
+
+/// C++ custompipes_* Neo shader parameters. These modes correspond to
+/// vehicle, world UV2/lightmap, gloss and rim (including CPU-skinned meshes).
+/// Bevy supplies the common transformed mesh vertex stage in every mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, ShaderType)]
+pub struct GtaNeoParams {
+    pub colour: Vec4,
+    pub surface: Vec4,
+    pub prelight: Vec4,
+    pub reflection: Vec4,
+    pub spec_color_and_power: Vec4,
+    pub lightmap: Vec4,
+    pub rim_start: Vec4,
+    pub rim_end: Vec4,
+    pub rim_data: Vec4,
+    pub actor_origin: Vec4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GtaNeoMode {
+    Vehicle,
+    World,
+    Gloss,
+    Rim,
+}
+
+impl GtaNeoMode {
+    pub const fn shader_value(self) -> f32 {
+        match self {
+            Self::Vehicle => 0.0,
+            Self::World => 1.0,
+            Self::Gloss => 2.0,
+            Self::Rim => 3.0,
+        }
+    }
+}
+
+/// One conventional Bevy material bind group. The specialized Neo draw paths
+/// need up to four separate textures and cannot share rw_unlit's bindless
+/// material descriptor layout without changing the default GTA renderer.
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, PartialEq)]
+pub struct GtaNeoMaterial {
+    #[uniform(0)]
+    pub params: GtaNeoParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub diffuse_texture: Option<Handle<Image>>,
+    #[texture(3)]
+    #[sampler(4)]
+    pub reflection_texture: Option<Handle<Image>>,
+    #[texture(5)]
+    #[sampler(6)]
+    pub lightmap_texture: Option<Handle<Image>>,
+    #[texture(7)]
+    #[sampler(8)]
+    pub gloss_texture: Option<Handle<Image>>,
+    #[storage(9, read_only)]
+    pub global_lighting: Handle<ShaderBuffer>,
+    pub alpha_mode: AlphaMode,
+}
+
+impl GtaNeoMaterial {
+    /// Construct from the canonical RenderWare material without duplicating
+    /// gameplay state. Extra textures are supplied by original TXD resolution.
+    pub fn from_unlit(base: &GtaUnlitMaterial, mode: GtaNeoMode) -> Self {
+        let mut params = GtaNeoParams {
+            colour: base.uniforms.colour,
+            surface: Vec4::new(
+                // RenderWare's actor ambient boost / world directional gate
+                // belong to the original material even after a Neo swap.
+                base.uniforms.surface.x * base.uniforms.lighting_options.x,
+                base.uniforms.surface.y * base.uniforms.lighting_options.y,
+                0.0,
+                mode.shader_value(),
+            ),
+            prelight: Vec4::new(
+                base.uniforms.light_direction_and_prelit.w,
+                base.uniforms.flags.y,
+                0.0,
+                0.0,
+            ),
+            reflection: Vec4::new(0.4, 1.0, 0.7, 1.0),
+            spec_color_and_power: Vec4::new(0.7, 0.7, 0.7, 18.0),
+            lightmap: Vec4::ONE,
+            rim_start: Vec4::ZERO,
+            rim_end: Vec4::ONE,
+            rim_data: Vec4::new(0.5, 1.5, 2.0, 1.0),
+            actor_origin: base.uniforms.actor_origin,
+        };
+        if mode == GtaNeoMode::Gloss {
+            params.colour = Vec4::ONE;
+        }
+        Self {
+            params,
+            diffuse_texture: base.base_color_texture.clone(),
+            reflection_texture: None,
+            lightmap_texture: None,
+            gloss_texture: None,
+            global_lighting: GTA_GLOBAL_LIGHTING_BUFFER.clone(),
+            alpha_mode: base.alpha_mode,
+        }
+    }
 }
 
 impl From<&GtaUnlitMaterial> for GtaUnlitUniforms {
@@ -289,8 +407,11 @@ impl GtaUnlitMaterial {
                     ambient_multiplier.max(0.0),
                     if directional_enabled { 1.0 } else { 0.0 },
                     0.0,
-                    0.0,
+                    // Only lit peds/vehicles/objects receive the original
+                    // per-object extra directional lights, not static world.
+                    if ambient_multiplier > 1.0 && directional_enabled { 1.0 } else { 0.0 },
                 ),
+                actor_origin: Vec4::ZERO,
             },
             base_color_texture: texture,
             global_lighting: GTA_GLOBAL_LIGHTING_BUFFER.clone(),
@@ -390,6 +511,7 @@ impl Plugin for GtaRenderMaterialsPlugin {
             MaterialPlugin::<GtaSkyMaterial>::default(),
             MaterialPlugin::<GtaWaterMaterial>::default(),
             MaterialPlugin::<GtaUnlitMaterial>::default(),
+            MaterialPlugin::<GtaNeoMaterial>::default(),
         ));
         app.add_plugins(super::WorldSurfaceCoverage::WorldSurfaceCoveragePlugin);
         app.world_mut()
@@ -455,6 +577,7 @@ impl Material for GtaSkyMaterial {
             depth.depth_write_enabled = Some(false);
         }
         descriptor.primitive.cull_mode = None;
+        specialize_gta_target(descriptor);
         Ok(())
     }
 
@@ -470,6 +593,16 @@ impl Material for GtaSkyMaterial {
 impl Material for GtaWaterMaterial {
     fn fragment_shader() -> ShaderRef {
         ShaderAssets::RW_WATER.into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        specialize_gta_target(descriptor);
+        Ok(())
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -515,6 +648,23 @@ impl Material for GtaUnlitMaterial {
             descriptor.primitive.cull_mode = Some(Face::Back);
         }
         descriptor.primitive.conservative = key.bind_group_data.conservative_coverage;
+        if key.bind_group_data.alpha_mode_bits == 4 {
+            // Renderer.cpp PASS_ADD uses SRCALPHA/ONE. Bevy's Add pipeline
+            // expects its stock shader to zero alpha; our RW shader carries
+            // authored alpha, so its default would attenuate the destination.
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                for target in fragment.targets.iter_mut().flatten() {
+                    target.blend = Some(bevy::render::render_resource::BlendState {
+                        color: bevy::render::render_resource::BlendComponent {
+                            src_factor: bevy::render::render_resource::BlendFactor::SrcAlpha,
+                            dst_factor: bevy::render::render_resource::BlendFactor::One,
+                            operation: bevy::render::render_resource::BlendOperation::Add,
+                        },
+                        alpha: bevy::render::render_resource::BlendComponent::OVER,
+                    });
+                }
+            }
+        }
         if key.bind_group_data.conservative_coverage
             && let Some(depth) = descriptor.depth_stencil.as_mut()
         {
@@ -522,9 +672,52 @@ impl Material for GtaUnlitMaterial {
             depth.bias.constant = -16;
             depth.bias.slope_scale = -1.0;
         }
+        specialize_gta_target(descriptor);
         // Ensure mesh pipeline knows we want UVs (and colours when present).
         // VERTEX_COLORS is driven by mesh layout; do not force it if mesh lacks COLOR.
         let _ = layout;
         Ok(())
+    }
+}
+
+impl Material for GtaNeoMaterial {
+    fn fragment_shader() -> ShaderRef {
+        ShaderAssets::RW_NEO.into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        specialize_gta_target(descriptor);
+        Ok(())
+    }
+}
+
+/// The mesh key already contains the view format, so encoded and linear
+/// attachments cannot reuse the same material pipeline specialization.
+fn specialize_gta_target(descriptor: &mut RenderPipelineDescriptor) {
+    if let Some(fragment) = descriptor.fragment.as_mut() {
+        let encoded = fragment.targets.first().and_then(Option::as_ref)
+            .is_some_and(|target| matches!(target.format,
+                bevy::render::render_resource::TextureFormat::Rgba8Unorm |
+                bevy::render::render_resource::TextureFormat::Bgra8Unorm));
+        fragment.shader_defs.push(bevy::shader::ShaderDefVal::Bool(
+            "GTA_ENCODED_TARGET".into(), encoded));
     }
 }

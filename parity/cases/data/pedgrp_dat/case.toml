@@ -1,8 +1,0 @@
-name = "pedgrp_dat"
-asset_root_config = "config/original_gta3_path.txt"
-relative_path = "DATA/PEDGRP.DAT"
-default_relative_path = "DATA/DEFAULT.DAT"
-gta3_relative_path = "DATA/GTA3.DAT"
-
-[tolerance]
-default = 0
