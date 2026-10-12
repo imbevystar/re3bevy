@@ -1,4 +1,4 @@
-//! GPU submission for CShadows' transient additive automobile light polygons.
+//! GPU submission for CShadows' projected additive light polygons.
 use super::*;
 use crate::renderer::{
     RendererMaterials::{GTA_GLOBAL_LIGHTING_BUFFER, GtaUnlitUniforms},
@@ -181,6 +181,28 @@ pub(super) fn flush_car_light_meshes(
                     )
                 }),
         );
+        // re3 StoreStaticShadow uses the same polygon-clipping and ONE/ONE
+        // render path as automobile lights, with its authored 15m vertical
+        // reach. A flat StandardMaterial quad at the lamp's ground height
+        // misses slopes and multiplies additive RGB by alpha a second time.
+        intents.extend(
+            std::mem::take(&mut shadows.static_shadows)
+                .into_iter()
+                .filter(|intent| intent.color != [0, 0, 0])
+                .map(|intent| {
+                    (
+                        CarLightShadowIntent {
+                            key: intent.key,
+                            texture: intent.texture as usize,
+                            position: intent.position,
+                            front: intent.front,
+                            side: intent.side,
+                            color: intent.color,
+                        },
+                        15.0,
+                    )
+                }),
+        );
         intents
     });
     if let (Some(shadows), Some(loader), Some(intents)) =
@@ -245,6 +267,10 @@ pub(super) fn flush_car_light_meshes(
                     // ONE/ONE uses RGB directly; the native alpha 128 must not
                     // premultiply it as Bevy's standard Add material would.
                     uniforms.flags.z = 0.0;
+                    // re3 adds the encoded D3D8 shadow RGB without fog. The
+                    // scene's HDR attachment otherwise decodes that small
+                    // encoded value *before* addition, hiding road glows.
+                    uniforms.flags.w = 1.0;
                     let material = GtaCarLightMaterial {
                         uniforms,
                         texture,

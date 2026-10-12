@@ -130,7 +130,9 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 
     let fog_start = global_lighting.fog_colour_and_start.w;
     let far_clip = global_lighting.light_direction_and_far_clip.w;
-    if far_clip > fog_start {
+    // CShadows::RenderStoredShadows disables fog for additive projected
+    // lights, even when the receiver's ordinary world material is fogged.
+    if material.flags.w < 0.5 && far_clip > fog_start {
         let view_depth = -(gta_view.view_from_world * mesh.world_position).z;
         let fog_f = clamp((view_depth - fog_start) / (far_clip - fog_start), 0.0, 1.0);
         lit = apply_fog(lit, global_lighting.fog_colour_and_start.rgb, fog_f);
@@ -141,6 +143,12 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
+    // GtaCarLightMaterial's ONE/ONE pass reproduces D3D8 encoded-channel
+    // addition on a linear HDR attachment by supplying encoded source RGB.
+    // Decoding small source bytes first would erase the streetlamp road glow.
+    if material.flags.w > 0.5 {
+        return vec4<f32>(lit.rgb, lit.a);
+    }
     // PASS_ADD's pipeline applies SRCALPHA/ONE; do not premultiply here.
     return vec4<f32>(rw_target_rgb(lit.rgb), lit.a);
 }

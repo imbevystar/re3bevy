@@ -142,7 +142,7 @@ pub struct SkyMaterialParams {
 #[derive(Debug, Clone, Copy, Default, PartialEq, ShaderType)]
 pub struct GtaUnlitUniforms {
     pub colour: Vec4,
-    /// x=has_texture, y=alpha_cutoff, z=additive, w=unused.
+    /// x=has_texture, y=alpha_cutoff, z=additive, w=encoded additive shadow output.
     pub flags: Vec4,
     /// x=surface ambient, y=surface diffuse, zw=reserved.
     pub surface: Vec4,

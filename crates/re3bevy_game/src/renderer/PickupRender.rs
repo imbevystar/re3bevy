@@ -160,22 +160,39 @@ pub(super) fn prepare_pickup_effects(
                 SCALES[colour_index],
             )
         };
-        coronas.register_corona(
-            id,
-            colour[0],
-            colour[1],
-            colour[2],
-            255,
-            position,
-            size,
-            draw_distance,
-            TYPE_RING,
-            FLARE_NONE,
-            REFLECTION_OFF,
-            LOSCHECK_OFF,
-            STREAK_OFF,
-            0.0,
-        );
+        // re3's collectable/money/mine routines register only inside their
+        // 14/20/20m effect radius. Ordinary pickups are pre-rendered only
+        // when resident in the visible world; RegisterCorona also rejects
+        // positions outside its 2D draw distance. Iterating every live ECS
+        // pickup without that gate filled all 128 corona slots with distant
+        // invisible rings before the nearby street lamps were visited.
+        let corona_in_range = if collectable {
+            distance < 14.0
+        } else if money || mine {
+            distance < 20.0
+        } else {
+            let dx = position.x - camera.position.x;
+            let dy = position.y - camera.position.y;
+            dx * dx + dy * dy < draw_distance * draw_distance
+        };
+        if corona_in_range {
+            coronas.register_corona(
+                id,
+                colour[0],
+                colour[1],
+                colour[2],
+                255,
+                position,
+                size,
+                draw_distance,
+                TYPE_RING,
+                FLARE_NONE,
+                REFLECTION_OFF,
+                LOSCHECK_OFF,
+                STREAK_OFF,
+                0.0,
+            );
+        }
         let angle =
             (now & (rotation_period - 1)) as f32 * std::f32::consts::TAU / rotation_period as f32;
         let (sine, cosine) = angle.sin_cos();

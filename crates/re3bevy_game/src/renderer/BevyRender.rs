@@ -4940,14 +4940,6 @@ fn update_atmosphere_and_fx(
                 .as_ref()
                 .and_then(|traffic_lights| traffic_lights.model_index);
             let camera_forward_gta = CVector::from_bevy(camera_forward);
-            if is_night && time_ms % 1000 < 20 && std::env::var_os("RE3BEVY_FX_DIAG").is_some() {
-                for (i, e) in file_loader.world.entities.iter().enumerate().filter(|(_, e)| e.model_index == 1393) {
-                    let delta = (e.position[0] - camera_pos.x).powi(2) + (e.position[1] - camera_pos.y).powi(2);
-                    if delta < 30.0 * 30.0 {
-                        eprintln!("LAMP_DEBUG placement={i} at={:?} visible={} promoted={:?} dist={:.1}", e.position, e.is_visible, file_loader.world.ecs_lifecycle_objects.get(&i), delta.sqrt());
-                    }
-                }
-            }
             // re3 traverses the camera's visible sectors rather than the IPL
             // file's insertion order. Traversing the full IPL by index lets
             // unrelated distant/offscreen effects claim all 128 corona slots
@@ -5086,10 +5078,6 @@ fn update_atmosphere_and_fx(
                             0.0,
                         );
                     }
-                    if is_night && entity.model_index == 1393 && delta_x * delta_x + delta_y * delta_y < 900.0 && time_ms % 1000 < 20 && std::env::var_os("RE3BEVY_FX_DIAG").is_some() {
-                        let registered = coronas.coronas.iter().find(|c| c.id == corona_id);
-                        eprintln!("LAMP_DEBUG fx entity={} fx={} on={} flickering={} world={:?} in_range={} registered={:?}", entity_index, fx_index, light_on, light_flickering, world_pos, corona_in_range, registered.map(|c| (c.fade_alpha, c.off_screen, c.registered_this_frame)));
-                    }
 
                     if let Some(ref mut pl) = point_lights {
                         if light.flags & 4 != 0 {
@@ -5144,6 +5132,7 @@ fn update_atmosphere_and_fx(
 
                     if light.shadow_size != 0.0
                         && (light_on || light_flickering)
+                        && delta_x * delta_x + delta_y * delta_y < 40.0 * 40.0
                         && let Some(shadows) = shadows.as_deref_mut()
                         && let Some(texture) = shadow_texture_type(shadows, &light.shadow)
                     {

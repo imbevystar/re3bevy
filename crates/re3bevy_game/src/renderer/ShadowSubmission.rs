@@ -189,62 +189,6 @@ pub(super) fn flush_shadow_meshes(
             &mut diagnostics,
         );
     }
-    for shadow in std::mem::take(&mut shadows.static_shadows) {
-        let alpha = if shadow.intensity == 0 && shadow.color.iter().any(|c| *c > 0) {
-            1.0
-        } else {
-            f32::from(shadow.intensity.clamp(0, 255)) / 255.0
-        };
-        if alpha <= 0.0 {
-            continue;
-        }
-        let mut mesh_shadow = ScriptShadow {
-            texture: 0,
-            position: shadow.position,
-            front: shadow.front,
-            side: shadow.side,
-            intensity: shadow.intensity,
-            color: shadow.color,
-            corners: None,
-        };
-        // re3 GeneratePolysForStaticShadow projects the lamp/traffic-light
-        // texture onto nearby collision polygons, *below* the bulb. Drawing
-        // the authored quad at the light's z made the road stay black even
-        // when the 2dfx light was registered. Adapt the projection to the
-        // native static-world vertical-line query, sampling each corner so
-        // ramps also receive their ground glow.
-        let top = shadow.position.z + 0.2;
-        let bottom = shadow.position.z - 15.0;
-        let project = |x: f32, y: f32| {
-            file_loader.world.process_vertical_line_static(
-                [x, y, top], bottom, &file_loader.model_info,
-            ).map(|hit| hit.point.z)
-        };
-        let Some(center_ground) = project(shadow.position.x, shadow.position.y) else {
-            continue;
-        };
-        mesh_shadow.corners = Some(shadow_corners(&mesh_shadow).map(|mut vertex| {
-            vertex.z = project(vertex.x, vertex.y).unwrap_or(center_ground) + 0.03;
-            vertex
-        }));
-        let colour = Color::srgba_u8(
-            shadow.color[0],
-            shadow.color[1],
-            shadow.color[2],
-            (alpha * 255.0).round() as u8,
-        );
-        append_shadow(
-            &mut batches,
-            &mesh_shadow,
-            shadow.texture as usize,
-            true,
-            colour,
-            particle_slot,
-            &shadows,
-            &texture_cache,
-            &mut diagnostics,
-        );
-    }
     let active_count = batches.len();
     diagnostics.submitted_batches += active_count as u64;
     for (index, batch) in batches.into_iter().enumerate() {
