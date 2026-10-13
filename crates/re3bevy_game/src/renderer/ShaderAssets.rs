@@ -60,6 +60,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resident_material_shaders_validate_with_both_binding_layouts() {
+        use bevy::shader::{ShaderCache, ShaderCacheError, ShaderCacheSource, ShaderDefVal};
+        // Load Bevy's actual embedded imports without opening a window or GPU.
+        let mut app = App::new();
+        let mut settings = bevy::render::settings::WgpuSettings::default();
+        settings.backends = None;
+        app.add_plugins(DefaultPlugins
+            .set(WindowPlugin { primary_window: None, ..default() })
+            .set(bevy::render::RenderPlugin { render_creation: settings.into(), ..default() })
+            .disable::<bevy::winit::WinitPlugin>()
+            .disable::<bevy::log::LogPlugin>()
+            .disable::<bevy::audio::AudioPlugin>())
+            .add_plugins(GtaShaderAssetsPlugin);
+        app.finish();
+        app.cleanup();
+        let mut cache = ShaderCache::new((), |_, source, _| {
+            let ShaderCacheSource::Wgsl(source) = source else { panic!("WESL must compose to WGSL") };
+            let module = naga::front::wgsl::parse_str(&source)
+                .map_err(|error| ShaderCacheError::CreateShaderModule(error.emit_to_string(&source)))?;
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+                .validate(&module)
+                .map_err(|error| ShaderCacheError::CreateShaderModule(format!("{error:?}")))?;
+            Ok(module)
+        });
+        for handle in [RW_UNLIT, RW_PC_ENVMAP] {
+            for bindless in [false, true] {
+                let defs = [
+                    ShaderDefVal::Bool("VERTEX_POSITIONS".into(), true),
+                    ShaderDefVal::Bool("VERTEX_NORMALS".into(), true),
+                    ShaderDefVal::Bool("VERTEX_UVS_A".into(), true),
+                    ShaderDefVal::Bool("VERTEX_COLORS".into(), true),
+                    ShaderDefVal::Bool("GTA_ENCODED_TARGET".into(), true),
+                    ShaderDefVal::Bool("BINDLESS".into(), bindless),
+                ];
+                let started = std::time::Instant::now();
+                let module = loop {
+                    app.update();
+                    for (id, shader) in app.world().resource::<Assets<Shader>>().iter() {
+                        cache.set_shader(id, shader.clone());
+                    }
+                    match cache.get(0, handle.id(), &defs) {
+                        Ok(module) => break module,
+                        Err(ShaderCacheError::ShaderImportNotYetAvailable) if started.elapsed().as_secs() < 10 => {
+                            std::thread::yield_now();
+                        }
+                        Err(error) => panic!("{handle:?} bindless={bindless}: {error}"),
+                    }
+                };
+                let mut bindings = module.global_variables.iter()
+                    .filter_map(|(_, variable)| variable.binding.as_ref())
+                    .filter(|binding| binding.group == 3)
+                    .map(|binding| binding.binding).collect::<Vec<_>>();
+                bindings.sort_unstable();
+                assert_eq!(bindings, if bindless { vec![0, 1, 5, 10, 11] }
+                    else if handle == RW_PC_ENVMAP { vec![0, 1, 2, 3, 4, 5] }
+                    else { vec![0, 1, 2, 3] });
+            }
+        }
+    }
+
+    #[test]
     fn program_shaders_register_without_a_file_asset_server() {
         let mut app = App::new();
         app.insert_resource(Assets::<Shader>::default())

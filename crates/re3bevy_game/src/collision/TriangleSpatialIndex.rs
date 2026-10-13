@@ -77,6 +77,23 @@ impl TriangleSpatialIndex {
         radius: f32,
         out: &mut Vec<usize>,
     ) {
+        self.box_candidates(
+            count,
+            CColVector::new(center.x - radius, center.y - radius, center.z - radius),
+            CColVector::new(center.x + radius, center.y + radius, center.z + radius),
+            out,
+        );
+    }
+
+    /// Conservative authored triangle candidates for a local-space footprint.
+    /// Narrow phase still decides inclusion, in the original COL order.
+    pub fn box_candidates(
+        &self,
+        count: usize,
+        min: CColVector,
+        max: CColVector,
+        out: &mut Vec<usize>,
+    ) {
         out.clear();
         // Temporary/test COLs can have no prepared cache. They use the same
         // full narrow phase, never fabricated or incomplete collision data.
@@ -84,23 +101,23 @@ impl TriangleSpatialIndex {
             out.extend(0..count);
             return;
         }
-        self.collect(0, center, radius, out);
+        self.collect(0, min, max, out);
         out.sort_unstable();
     }
-    fn collect(&self, node: usize, p: CColVector, radius: f32, out: &mut Vec<usize>) {
+    fn collect(&self, node: usize, min: CColVector, max: CColVector, out: &mut Vec<usize>) {
         let node = &self.nodes[node];
-        if p.x + radius < node.min.x
-            || p.x - radius > node.max.x
-            || p.y + radius < node.min.y
-            || p.y - radius > node.max.y
-            || p.z + radius < node.min.z
-            || p.z - radius > node.max.z
+        if max.x < node.min.x
+            || min.x > node.max.x
+            || max.y < node.min.y
+            || min.y > node.max.y
+            || max.z < node.min.z
+            || min.z > node.max.z
         {
             return;
         }
         if let Some((left, right)) = node.children {
-            self.collect(left, p, radius, out);
-            self.collect(right, p, radius, out);
+            self.collect(left, min, max, out);
+            self.collect(right, min, max, out);
         } else {
             out.extend_from_slice(&self.indices[node.start..node.end]);
         }
@@ -110,6 +127,35 @@ impl TriangleSpatialIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn footprint_candidates_cover_overlaps_in_all_axes_in_original_order() {
+        let bounds: Vec<_> = (0..256).map(|i| {
+            let x = (i % 16) as f32 * 10.0;
+            let y = (i / 16) as f32 * 10.0;
+            let z = (i % 3) as f32 * 5.0;
+            (CColVector::new(x, y, z), CColVector::new(x + 2.0, y + 2.0, z + 1.0))
+        }).collect();
+        let tree = TriangleSpatialIndex::from_bounds(&bounds);
+        let mut candidates = Vec::new();
+        for x in [-1.0, 0.0, 2.0, 10.0, 43.0, 140.0] {
+            for z in [0.0, 1.0, 5.0, 10.0] {
+                let min = CColVector::new(x, 20.0, z);
+                let max = CColVector::new(x + 8.0, 32.0, z + 1.0);
+                tree.box_candidates(bounds.len(), min, max, &mut candidates);
+                assert!(candidates.windows(2).all(|pair| pair[0] < pair[1]));
+                assert!(candidates.len() < bounds.len());
+                for (id, (a, b)) in bounds.iter().enumerate() {
+                    if max.x >= a.x && min.x <= b.x && max.y >= a.y && min.y <= b.y
+                        && max.z >= a.z && min.z <= b.z {
+                        assert!(candidates.binary_search(&id).is_ok(), "omitted triangle {id}");
+                    }
+                }
+            }
+        }
+        tree.box_candidates(260, CColVector::new(0.0, 0.0, 0.0), CColVector::new(1.0, 1.0, 1.0), &mut candidates);
+        assert_eq!(candidates, (0..260).collect::<Vec<_>>());
+    }
     #[test]
     fn candidates_conservatively_cover_bounds_and_retain_native_order() {
         let bounds: Vec<_> = (0..257)

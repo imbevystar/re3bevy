@@ -77,9 +77,49 @@ pub(super) fn vehicle_bright_light_colour(
     Some([rgb[0], rgb[1], rgb[2], alpha.clamp(0.0, 255.0) as u8])
 }
 
+/// CBrightLights fills one untextured vertex/index buffer in registration order.
+#[derive(Default)]
+pub(super) struct BrightLightMeshBatch {
+    positions: Vec<[f32; 3]>,
+    colours: Vec<[f32; 4]>,
+    indices: Vec<u32>,
+}
+
+impl BrightLightMeshBatch {
+    pub(super) fn clear(&mut self) {
+        self.positions.clear();
+        self.colours.clear();
+        self.indices.clear();
+    }
+
+    pub(super) fn append(&mut self, mesh: Mesh, colour: Color) {
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+            warn_once!("bright_light_batch_missing_positions");
+            return;
+        };
+        let Some(indices) = mesh.indices() else {
+            warn_once!("bright_light_batch_missing_indices");
+            return;
+        };
+        let base = self.positions.len() as u32;
+        self.indices.extend(indices.iter().map(|index| base + index as u32));
+        self.colours.extend(std::iter::repeat_n(colour.to_linear().to_vec4().to_array(), positions.len()));
+        self.positions.extend_from_slice(positions);
+    }
+
+    pub(super) fn mesh(&self) -> Option<Mesh> {
+        if self.indices.is_empty() { return None; }
+        Some(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+            .with_inserted_indices(Indices::U32(self.indices.clone()))
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions.clone())
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; self.positions.len()])
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colours.clone()))
+    }
+}
+
 /// Same WESL RenderWare modulation as other GTA draws, with the original
 /// SHADOWTYPE_ADDITIVE ONE/ONE blend and depth-test/no-depth-write state.
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, PartialEq)]
 pub struct GtaCarLightMaterial {
     #[uniform(0)]
     pub uniforms: GtaUnlitUniforms,
@@ -91,6 +131,10 @@ pub struct GtaCarLightMaterial {
 }
 
 impl Material for GtaCarLightMaterial {
+    fn vertex_shader() -> ShaderRef {
+        crate::renderer::ShaderAssets::RW_UNLIT.into()
+    }
+
     fn fragment_shader() -> ShaderRef {
         crate::renderer::ShaderAssets::RW_UNLIT.into()
     }
@@ -138,6 +182,30 @@ pub struct GtaCarLightProjection {
 #[derive(Default)]
 pub(super) struct CarLightMeshSlots {
     entities: Vec<Entity>,
+    batches: Vec<CarLightBatch>,
+    submitted: Vec<Entity>,
+}
+
+#[derive(Default)]
+struct CarLightBatch {
+    texture_index: usize,
+    texture: Option<Handle<Image>>,
+    key: u32,
+    positions: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    colours: Vec<[f32; 4]>,
+    indices: Vec<u32>,
+}
+
+impl CarLightBatch {
+    fn append(&mut self, geometry: crate::renderer::Shadows::ProjectedShadowGeometry, colour: [u8; 3]) {
+        let base = self.positions.len() as u32;
+        let colour = [colour[0] as f32 / 255.0, colour[1] as f32 / 255.0, colour[2] as f32 / 255.0, 1.0];
+        self.colours.extend(std::iter::repeat_n(colour, geometry.positions.len()));
+        self.positions.extend(geometry.positions.into_iter().map(|p| p.to_bevy().to_array()));
+        self.uvs.extend(geometry.uvs);
+        self.indices.extend(geometry.indices.into_iter().map(|i| base + i));
+    }
 }
 
 pub(super) fn flush_car_light_meshes(
@@ -159,6 +227,16 @@ pub(super) fn flush_car_light_meshes(
 ) {
     diagnostics.begin_frame();
     let mut active = 0;
+    let mut submitted = std::mem::take(&mut slots.submitted);
+    submitted.clear();
+    // RenderStoredShadows batches all ONE/ONE polygons by texture. Keep the
+    // same native vertex colours, rather than one material and draw per lamp.
+    for batch in &mut slots.batches {
+        batch.positions.clear();
+        batch.uvs.clear();
+        batch.colours.clear();
+        batch.indices.clear();
+    }
     let intents = shadows.as_mut().map(|shadows| {
         let mut intents: Vec<_> = std::mem::take(&mut shadows.car_light_shadows)
             .into_iter()
@@ -235,89 +313,72 @@ pub(super) fn flush_car_light_meshes(
                     if geometry.indices.is_empty() {
                         continue;
                     }
-                    let vertices = geometry.positions.len();
-                    let mesh = Mesh::new(
-                        PrimitiveTopology::TriangleList,
-                        RenderAssetUsages::default(),
-                    )
-                    .with_inserted_indices(Indices::U32(geometry.indices))
-                    .with_inserted_attribute(
-                        Mesh::ATTRIBUTE_POSITION,
-                        geometry
-                            .positions
-                            .into_iter()
-                            .map(|p| p.to_bevy().to_array())
-                            .collect::<Vec<_>>(),
-                    )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, geometry.uvs)
-                    .with_inserted_attribute(
-                        Mesh::ATTRIBUTE_NORMAL,
-                        vec![[0.0, 1.0, 0.0]; vertices],
-                    )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0; 4]; vertices]);
+                    let batch_index = slots.batches.iter().position(|b| b.texture_index == intent.texture)
+                        .unwrap_or_else(|| {
+                            slots.batches.push(CarLightBatch { texture_index: intent.texture, ..default() });
+                            slots.batches.len() - 1
+                        });
+                    let batch = &mut slots.batches[batch_index];
+                    batch.texture = Some(texture);
+                    batch.key = intent.key;
+                    batch.append(geometry, intent.color);
+                }
+                for batch in &slots.batches {
+                    if batch.indices.is_empty() { continue; }
+                    let texture = batch.texture.as_ref().expect("projected batch has a texture").clone();
+                    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+                        .with_inserted_indices(Indices::U32(batch.indices.clone()))
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, batch.positions.clone())
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, batch.uvs.clone())
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; batch.positions.len()])
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, batch.colours.clone());
                     let source = GtaUnlitMaterial::from_gta(
-                        Color::srgba_u8(intent.color[0], intent.color[1], intent.color[2], 128),
-                        Some(texture.clone()),
-                        true,
-                        true,
-                        [0.0; 3],
-                        0.0,
+                        Color::srgba_u8(255, 255, 255, 128), Some(texture.clone()), true, true, [0.0; 3], 0.0,
                     );
                     let mut uniforms = source.uniforms;
-                    // ONE/ONE uses RGB directly; the native alpha 128 must not
-                    // premultiply it as Bevy's standard Add material would.
                     uniforms.flags.z = 0.0;
-                    // re3 adds the encoded D3D8 shadow RGB without fog. The
-                    // scene's HDR attachment otherwise decodes that small
-                    // encoded value *before* addition, hiding road glows.
                     uniforms.flags.w = 1.0;
                     let material = GtaCarLightMaterial {
-                        uniforms,
-                        texture,
-                        global_lighting: GTA_GLOBAL_LIGHTING_BUFFER.clone(),
+                        uniforms, texture, global_lighting: GTA_GLOBAL_LIGHTING_BUFFER.clone(),
                     };
                     let entity = if let Some(&entity) = slots.entities.get(active)
-                        && let Ok((
-                            mut mesh_handle,
-                            mut material_handle,
-                            mut visibility,
-                            mut projection,
-                        )) = draws.get_mut(entity)
+                        && let Ok((mut mesh_handle, mut material_handle, mut visibility, mut projection)) = draws.get_mut(entity)
                     {
-                        if let Some(mut asset) = meshes.get_mut(&mesh_handle.0) {
-                            *asset = mesh;
-                        } else {
-                            diagnostics.missing_dependencies += 1;
+                        // A changed polygon count must receive a matching GPU
+                        // allocation; unchanged bytes need no asset event.
+                        if !reuse_persistent_mesh_shape(&mut meshes, &mesh_handle.0, &mesh) {
+                            meshes.remove(mesh_handle.0.id());
                             mesh_handle.0 = meshes.add(mesh);
                         }
-                        if let Some(mut asset) = materials.get_mut(&material_handle.0) {
-                            *asset = material;
-                        } else {
-                            diagnostics.missing_dependencies += 1;
-                            material_handle.0 = materials.add(material);
+                        if materials.get(&material_handle.0) != Some(&material) {
+                            if let Some(mut asset) = materials.get_mut(&material_handle.0) {
+                                *asset = material;
+                            } else {
+                                diagnostics.missing_dependencies += 1;
+                                material_handle.0 = materials.add(material);
+                            }
                         }
-                        *visibility = Visibility::Visible;
-                        projection.key = intent.key;
+                        if *visibility != Visibility::Visible { *visibility = Visibility::Visible; }
+                        if projection.key != batch.key { projection.key = batch.key; }
                         entity
                     } else {
-                        commands
-                            .spawn((
-                                Mesh3d(meshes.add(mesh)),
-                                MeshMaterial3d(materials.add(material)),
-                                Transform::IDENTITY,
-                                Visibility::Visible,
-                                NoFrustumCulling,
-                                GtaCarLightProjection { key: intent.key },
-                            ))
-                            .id()
+                        commands.spawn((
+                            Mesh3d(meshes.add(mesh)), MeshMaterial3d(materials.add(material)),
+                            Transform::IDENTITY, Visibility::Visible, NoFrustumCulling,
+                            GtaCarLightProjection { key: batch.key },
+                        )).id()
                     };
-                    if let Some(slot) = slots.entities.get_mut(active) {
-                        *slot = entity;
-                    } else {
-                        slots.entities.push(entity);
-                    }
+                    // Store after the immutable batch iteration below.
+                    submitted.push(entity);
                     active += 1;
                 }
+                let reused = active.min(slots.entities.len());
+                slots.entities[..reused].copy_from_slice(&submitted[..reused]);
+                if active > slots.entities.len() {
+                    let previous_len = slots.entities.len();
+                    slots.entities.extend_from_slice(&submitted[previous_len..]);
+                }
+
             } else {
                 diagnostics.missing_texture += 1;
                 warn_once!(target: "re3bevy::car_light_projection", "required original particle TXD is absent");
@@ -326,6 +387,7 @@ pub(super) fn flush_car_light_meshes(
     } else if shadows.is_some() {
         diagnostics.missing_dependencies += 1;
     }
+    slots.submitted = submitted;
     diagnostics.visible_meshes = active;
     for &entity in &slots.entities[active..] {
         if let Ok((_, _, mut visibility, _)) = draws.get_mut(entity) {
@@ -353,6 +415,42 @@ pub(super) fn reset_car_light_meshes(
 mod bulb_tests {
     use super::*;
     use crate::renderer::SpecialFX::BrightLightRenderIntent;
+
+    #[test]
+    fn bulb_batch_keeps_all_shapes_in_registration_order_with_per_vertex_alpha() {
+        let mut batch = BrightLightMeshBatch::default();
+        let colour = Color::srgba_u8(255, 42, 42, 31);
+        batch.append(build_vehicle_bright_light_mesh(&bulb(4, 0.0)).unwrap(), colour);
+        batch.append(build_vehicle_bright_light_mesh(&bulb(11, 0.0)).unwrap(), Color::WHITE);
+        let mesh = batch.mesh().unwrap();
+        assert_eq!(mesh.count_vertices(), 16);
+        let indices: Vec<_> = mesh.indices().unwrap().iter().collect();
+        assert_eq!(indices.len(), 72);
+        assert!(indices[..36].iter().all(|&i| i < 8));
+        assert!(indices[36..].iter().all(|&i| (8..16).contains(&i)));
+        let bevy::mesh::VertexAttributeValues::Float32x4(colours) = mesh.attribute(Mesh::ATTRIBUTE_COLOR).unwrap() else { panic!("colour format"); };
+        assert!(colours[..8].iter().all(|c| *c == colour.to_linear().to_vec4().to_array()));
+        assert!(colours[8..].iter().all(|c| *c == [1.0; 4]));
+        batch.clear();
+        assert!(batch.mesh().is_none());
+    }
+
+    #[test]
+    fn additive_batch_preserves_native_colours_and_offsets_each_polygon() {
+        let mut batch = CarLightBatch::default();
+        let geometry = || crate::renderer::Shadows::ProjectedShadowGeometry {
+            positions: vec![CVector::ZERO, CVector::new(1.0, 0.0, 0.0), CVector::new(0.0, 1.0, 0.0)],
+            uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+            indices: vec![0, 2, 1],
+        };
+        batch.append(geometry(), [45, 128, 255]);
+        batch.append(geometry(), [0, 20, 40]);
+        assert_eq!(batch.indices, [0, 2, 1, 3, 5, 4]);
+        assert_eq!(batch.positions.len(), 6);
+        assert_eq!(batch.uvs.len(), 6);
+        assert!(batch.colours[..3].iter().all(|c| *c == [45.0/255.0, 128.0/255.0, 1.0, 1.0]));
+        assert!(batch.colours[3..].iter().all(|c| *c == [0.0, 20.0/255.0, 40.0/255.0, 1.0]));
+    }
 
     fn bulb(light_type: u8, distance: f32) -> BrightLightRenderIntent {
         BrightLightRenderIntent {

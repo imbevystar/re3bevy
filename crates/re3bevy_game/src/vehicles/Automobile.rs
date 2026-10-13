@@ -3619,14 +3619,15 @@ pub(crate) fn automobile_static_contacts_for_matrix(
     model_id: usize,
     matrix: &CMatrix,
 ) -> Vec<crate::core::World::StaticModelContact> {
-    file_loader.world.vehicle_contacts_static_world(
+    let Some(col) = file_loader.collision_model(model_id) else { return Vec::new(); };
+    file_loader.world.col_model_contacts_static_world(
         [matrix.position.x, matrix.position.y, matrix.position.z],
         [
             [matrix.right.x, matrix.right.y, matrix.right.z],
             [matrix.forward.x, matrix.forward.y, matrix.forward.z],
             [matrix.up.x, matrix.up.y, matrix.up.z],
         ],
-        model_id,
+        col,
         &file_loader.model_info,
     )
 }

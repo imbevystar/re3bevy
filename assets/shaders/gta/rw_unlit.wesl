@@ -1,6 +1,7 @@
 import bevy_render::view::View;
-import bevy_pbr::render::mesh_types::Mesh;
-import bevy_pbr::render::forward_io::VertexOutput;
+import bevy_pbr::render::forward_io::{Vertex, decompress_vertex};
+import bevy_pbr::render::mesh_bindings::mesh;
+import bevy_pbr::render::mesh_functions::{get_world_from_local, mesh_position_local_to_world};
 import super::rw_unlit_util::{GtaGlobalLighting, apply_fog, linear_to_rw_rgb, rw_target_rgb, rw_object_local_lights};
 
 @if(BINDLESS)
@@ -46,29 +47,41 @@ struct MaterialBindings {
 @if(BINDLESS)
 @group(3) @binding(11) var<storage, read> lighting_buffers: binding_array<GtaGlobalLighting>;
 
-@if(BINDLESS)
-@group(2) @binding(0) var<storage, read> mesh_instances: array<Mesh>;
-
-@fragment
-fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
+// librw default.vert/default_VS.hlsl light and clamp each vertex before
+// interpolation. Evaluating the 32-light selection in every fragment both
+// changed that shading and repeated actor-invariant work over every pixel.
+struct GtaVertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) colour: vec4<f32>,
+    @location(2) fog: f32,
     @if(BINDLESS)
-    let bindings = material_indices[mesh_instances[mesh.instance_index].material_and_lightmap_bind_group_slot & 0xffffu];
+    @location(3) @interpolate(flat) material_slot: u32,
+}
+
+@vertex
+fn vertex(input: Vertex) -> GtaVertexOutput {
+    let source = decompress_vertex(input, input.instance_index);
+    let world = get_world_from_local(input.instance_index);
+    let world_position = mesh_position_local_to_world(world, vec4<f32>(source.position, 1.0));
+    @if(VERTEX_NORMALS)
+    let normal = (world * vec4<f32>(source.normal, 0.0)).xyz;
+    @if(!VERTEX_NORMALS)
+    let normal = vec3<f32>(0.0);
+    @if(BINDLESS)
+    let material_slot = mesh[input.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
+    @if(BINDLESS)
+    let bindings = material_indices[material_slot];
     @if(BINDLESS)
     let material = material_data[bindings.data];
     @if(BINDLESS)
     let global_lighting = lighting_buffers[bindings.lighting];
-    @if(BINDLESS)
-    let tex = textureSample(material_textures[bindings.texture], material_samplers[bindings.sampler], mesh.uv);
     @if(!BINDLESS)
     let material = material_single;
     @if(!BINDLESS)
     let global_lighting = lighting_single;
-    @if(!BINDLESS)
-    let tex = textureSample(base_color_texture, base_color_sampler, mesh.uv);
-    let texture_rw = linear_to_rw_rgb(tex.rgb);
-
     @if(VERTEX_COLORS)
-    let source_colour = mesh.color;
+    let source_colour = source.color;
     @if(!VERTEX_COLORS)
     let source_colour = vec4<f32>(1.0);
     var vertex_colour = source_colour;
@@ -76,11 +89,8 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     if mode >= 0.0 {
         let has_prelight = step(0.5, mode) * (1.0 - step(1.5, mode));
         let batched_material_colour = step(1.5, mode);
-        // Bevy's mesh vertex stage already supplies the transformed normal.
-        // re3/librw's default shader dots that value directly; normalizing a
-        // zero RW normal here produced NaNs even when directional light was
-        // disabled for static world entities.
-        let normal = mesh.world_normal;
+        // RenderWare dots the transformed authored normal directly, including
+        // zero normals, without fragment-stage renormalization.
         let sun = normalize(global_lighting.light_direction_and_far_clip.xyz);
         let diffuse = max(dot(normal, sun), 0.0);
         // C3dMarker::Render installs SetBrightMarkerColours around its draw.
@@ -100,7 +110,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
             + directional
                 * (material.surface.y * diffuse * material.lighting_options.y);
         if material.lighting_options.w > 0.5 {
-            let origin = select(mesh.world_position.xyz, material.actor_origin.xyz, material.actor_origin.w > 0.5);
+            let origin = select(world_position.xyz, material.actor_origin.xyz, material.actor_origin.w > 0.5);
             let local = rw_object_local_lights(global_lighting, origin, normal);
             if local.w != 1.0 {
                 // SetupLighting replaces ambient/direct colours only; DFF
@@ -123,20 +133,44 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
         vertex_colour = vec4<f32>(lit_vertex_rgb, source_colour.a);
     }
 
-    var lit = vec4<f32>(
-        material.colour.rgb * texture_rw * vertex_colour.rgb,
-        material.colour.a * tex.a * vertex_colour.a,
-    );
-
+    var output: GtaVertexOutput;
+    output.position = gta_view.clip_from_world * world_position;
+    output.uv = vec2<f32>(0.0);
+    @if(VERTEX_UVS_A)
+    output.uv = source.uv;
+    output.colour = material.colour * vertex_colour;
+    output.fog = 0.0;
+    @if(BINDLESS)
+    output.material_slot = material_slot;
     let fog_start = global_lighting.fog_colour_and_start.w;
     let far_clip = global_lighting.light_direction_and_far_clip.w;
     // CShadows::RenderStoredShadows disables fog for additive projected
     // lights, even when the receiver's ordinary world material is fogged.
     if material.flags.w < 0.5 && far_clip > fog_start {
-        let view_depth = -(gta_view.view_from_world * mesh.world_position).z;
-        let fog_f = clamp((view_depth - fog_start) / (far_clip - fog_start), 0.0, 1.0);
-        lit = apply_fog(lit, global_lighting.fog_colour_and_start.rgb, fog_f);
+        let view_depth = -(gta_view.view_from_world * world_position).z;
+        output.fog = clamp((view_depth - fog_start) / (far_clip - fog_start), 0.0, 1.0);
     }
+    return output;
+}
+
+@fragment
+fn fragment(input: GtaVertexOutput) -> @location(0) vec4<f32> {
+    @if(BINDLESS)
+    let bindings = material_indices[input.material_slot];
+    @if(BINDLESS)
+    let material = material_data[bindings.data];
+    @if(BINDLESS)
+    let global_lighting = lighting_buffers[bindings.lighting];
+    @if(BINDLESS)
+    let tex = textureSample(material_textures[bindings.texture], material_samplers[bindings.sampler], input.uv);
+    @if(!BINDLESS)
+    let material = material_single;
+    @if(!BINDLESS)
+    let global_lighting = lighting_single;
+    @if(!BINDLESS)
+    let tex = textureSample(base_color_texture, base_color_sampler, input.uv);
+    var lit = input.colour * vec4<f32>(linear_to_rw_rgb(tex.rgb), tex.a);
+    lit = apply_fog(lit, global_lighting.fog_colour_and_start.rgb, input.fog);
 
     let cutoff = material.flags.y;
     if cutoff > 0.0 && lit.a <= cutoff {

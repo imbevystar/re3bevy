@@ -250,6 +250,15 @@ impl Default for CFileLoader {
 }
 
 impl CFileLoader {
+    /// CBaseModelInfo::GetColModel also resolves the engine's shared
+    /// CTempColModels bindings for flying vehicle components (ModelInfo::Initialise).
+    pub fn collision_model(&self, model_index: usize) -> Option<&crate::collision::ColModel::CColModel> {
+        let base = self.model_info.get_model_info(model_index)?.base();
+        base.col_model.as_ref().or_else(|| {
+            base.default_col_model.map(|kind| self.temp_col_models.model_for_kind(kind))
+        })
+    }
+
     pub fn new() -> Self {
         let mut txd_store = CTxdStore::initialise();
         let model_info = CModelInfo::initialise(&mut txd_store);
@@ -2711,6 +2720,20 @@ mod streaming_request_cleanup_tests {
         CStreaming, CStreamingModelInfo, STREAMFLAGS_KEEP_IN_MEMORY, STREAMFLAGS_PRIORITY,
         StreamLoadState,
     };
+
+    #[test]
+    fn flying_components_borrow_the_shared_native_collision_models() {
+        use crate::modelinfo::ModelIndices::{MI_CAR_BUMPER, MI_CAR_DOOR, MI_CAR_WHEEL};
+        let loader = CFileLoader::default();
+        for (id, model) in [
+            (MI_CAR_BUMPER, &loader.temp_col_models.col_model_bumper1),
+            (MI_CAR_DOOR, &loader.temp_col_models.col_model_door1),
+            (MI_CAR_WHEEL, &loader.temp_col_models.col_model_wheel1),
+        ] {
+            assert!(std::ptr::eq(loader.collision_model(id).unwrap(), model));
+        }
+        assert!(loader.collision_model(usize::MAX).is_none());
+    }
 
     #[test]
     fn resurrection_scene_barrier_drains_inflight_reads_and_split_conversions() {

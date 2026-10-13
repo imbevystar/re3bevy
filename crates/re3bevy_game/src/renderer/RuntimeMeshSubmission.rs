@@ -76,14 +76,28 @@ pub(super) struct GtaRuntimeMeshRefresh {
 fn sync_runtime_actor_lighting_origins(
     registry: Res<GtaAnimatedRuntimeMeshRegistry>,
     mut materials: ResMut<Assets<GtaUnlitMaterial>>,
+    pc_draws: Query<(), (With<MeshMaterial3d<crate::renderer::PcMatFxRender::GtaPcEnvMaterial>>, Without<MeshMaterial3d<GtaUnlitMaterial>>)>,
 ) {
     for slot in registry.slots.values() {
+        // Native SetupLighting is part of rendering a visible actor. Hidden
+        // resident parts retain their materials until the actor is submitted.
+        if !slot.is_visible {
+            continue;
+        }
         let origin = slot.rendered_root_transform.translation.extend(1.0);
-        for handle in &slot.materials {
-            if materials.get(handle).is_some_and(|m| m.uniforms.actor_origin != origin)
-                && let Some(mut material) = materials.get_mut(handle)
-            {
-                material.uniforms.actor_origin = origin;
+        for (entity, handle) in slot.entities.iter().zip(&slot.materials) {
+            if materials.get(handle).is_some_and(|m| m.uniforms.actor_origin != origin) {
+                if pc_draws.contains(*entity) {
+                    // PC MatFX reads this canonical source on the CPU, but the
+                    // original GPU material isn't drawn. Avoid preparing both
+                    // materials for each moving part. Pipeline restoration
+                    // explicitly republishes its current source below.
+                    if let Some(material) = materials.get_mut_untracked(handle) {
+                        material.uniforms.actor_origin = origin;
+                    }
+                } else if let Some(mut material) = materials.get_mut(handle) {
+                    material.uniforms.actor_origin = origin;
+                }
             }
         }
     }
@@ -2424,7 +2438,7 @@ pub(super) fn spawn_or_update_dynamic_runtime_mesh(
                 stats.skipped_missing_texture += 1;
             }
             {
-                let refreshed = gta_world_material(
+                let mut refreshed = gta_world_material(
                     base_color,
                     base_color_texture,
                     texture_alpha,
@@ -2434,6 +2448,7 @@ pub(super) fn spawn_or_update_dynamic_runtime_mesh(
                     drawable.has_prelit,
                     lighting,
                 );
+                refreshed.uniforms.actor_origin = transform.translation.extend(1.0);
                 if let Some(base_alpha) = cached.material_base_alphas.get_mut(part) {
                     *base_alpha = refreshed.uniforms.colour.w;
                 }

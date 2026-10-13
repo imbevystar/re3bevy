@@ -431,7 +431,8 @@ impl Plugin for GtaNeoRenderPlugin {
         app.add_plugins(MaterialPlugin::<GtaPcEnvMaterial>::default())
             .init_resource::<super::PcMatFxRender::GtaPcEnvMaterials>()
             .init_resource::<super::PcMatFxRender::GtaPcEnvDiagnostics>()
-            .add_systems(Update, super::PcMatFxRender::sync_pc_environment_materials
+            .add_systems(Update, (super::PcMatFxRender::sync_pc_environment_materials,
+                super::PcMatFxRender::refresh_restored_original_materials).chain()
                 .after(GtaProcessSet::RenderPrep)
                 .after(sync_neo_materials));
         app.init_resource::<CustomPipesState>()

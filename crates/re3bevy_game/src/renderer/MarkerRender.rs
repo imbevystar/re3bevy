@@ -34,6 +34,10 @@ impl From<&GtaMarkerMaterial> for MarkerMaterialKey {
     }
 }
 impl Material for GtaMarkerMaterial {
+    fn vertex_shader() -> ShaderRef {
+        crate::renderer::ShaderAssets::RW_UNLIT.into()
+    }
+
     fn fragment_shader() -> ShaderRef {
         crate::renderer::ShaderAssets::RW_UNLIT.into()
     }

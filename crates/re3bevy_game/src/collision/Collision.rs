@@ -1484,9 +1484,7 @@ pub(crate) fn process_script_entity_collisions(
             continue;
         };
         let position = base.physical.entity.get_position();
-        let Some(radius) = file_loader
-            .model_info
-            .col_model(base.physical.entity.model_index.max(0) as usize)
+        let Some(radius) = file_loader.collision_model(base.physical.entity.model_index.max(0) as usize)
             .map(|model| model.bounding_sphere.radius)
         else {
             vehicle_spatial.missing_bounds += 1;
@@ -1561,9 +1559,7 @@ pub(crate) fn process_script_entity_collisions(
                 return None;
             }
             let position = object.physical.entity.get_position();
-            let radius = file_loader
-                .model_info
-                .col_model(object.physical.entity.model_index.max(0) as usize)?
+            let radius = file_loader.collision_model(object.physical.entity.model_index.max(0) as usize)?
                 .bounding_sphere
                 .radius;
             Some((entity.handle, position.x, position.y, radius))
@@ -1603,8 +1599,8 @@ pub(crate) fn process_script_entity_collisions(
             let object_matrix = object.object.physical.entity.matrix;
             let object_model_id = object.object.physical.entity.model_index.max(0) as usize;
             let (Some(vehicle_model), Some(object_model)) = (
-                file_loader.model_info.col_model(vehicle_model_id),
-                file_loader.model_info.col_model(object_model_id),
+                file_loader.collision_model(vehicle_model_id),
+                file_loader.collision_model(object_model_id),
             ) else {
                 continue;
             };
@@ -1764,9 +1760,7 @@ pub(crate) fn process_script_entity_collisions(
                 return None;
             }
             let position = object.physical.entity.get_position();
-            let radius = file_loader
-                .model_info
-                .col_model(object.physical.entity.model_index.max(0) as usize)?
+            let radius = file_loader.collision_model(object.physical.entity.model_index.max(0) as usize)?
                 .bounding_sphere
                 .radius;
             Some((entity.handle, position.x, position.y, radius))
@@ -1798,15 +1792,11 @@ pub(crate) fn process_script_entity_collisions(
             let still_touching = vehicle.is_some_and(|vehicle| {
                 let object_position = object.physical.entity.get_position();
                 let vehicle_position = vehicle.physical.entity.get_position();
-                let Some(object_model) = file_loader
-                    .model_info
-                    .col_model(object.physical.entity.model_index.max(0) as usize)
+                let Some(object_model) = file_loader.collision_model(object.physical.entity.model_index.max(0) as usize)
                 else {
                     return false;
                 };
-                let Some(vehicle_model) = file_loader
-                    .model_info
-                    .col_model(vehicle.physical.entity.model_index.max(0) as usize)
+                let Some(vehicle_model) = file_loader.collision_model(vehicle.physical.entity.model_index.max(0) as usize)
                 else {
                     return false;
                 };
@@ -1854,8 +1844,8 @@ pub(crate) fn process_script_entity_collisions(
             let object_matrix = object.object.physical.entity.matrix;
             let object_model_id = object.object.physical.entity.model_index.max(0) as usize;
             let (Some(vehicle_model), Some(object_model)) = (
-                file_loader.model_info.col_model(vehicle_model_id),
-                file_loader.model_info.col_model(object_model_id),
+                file_loader.collision_model(vehicle_model_id),
+                file_loader.collision_model(object_model_id),
             ) else {
                 continue;
             };
@@ -1995,8 +1985,8 @@ pub(crate) fn process_script_entity_collisions(
             let matrix_b = object_b.object.physical.entity.matrix;
             let model_b_id = object_b.object.physical.entity.model_index.max(0) as usize;
             let (Some(model_a), Some(model_b)) = (
-                file_loader.model_info.col_model(model_a_id),
-                file_loader.model_info.col_model(model_b_id),
+                file_loader.collision_model(model_a_id),
+                file_loader.collision_model(model_b_id),
             ) else {
                 continue;
             };
@@ -2099,9 +2089,7 @@ pub(crate) fn process_script_entity_collisions(
                 return None;
             }
             let position = object.physical.entity.get_position();
-            let radius = file_loader
-                .model_info
-                .col_model(object.physical.entity.model_index.max(0) as usize)?
+            let radius = file_loader.collision_model(object.physical.entity.model_index.max(0) as usize)?
                 .bounding_sphere
                 .radius;
             Some((entity.handle, position.x, position.y, radius))
@@ -2127,9 +2115,7 @@ pub(crate) fn process_script_entity_collisions(
                 return None;
             }
             let position = ped.ped.physical.entity.get_position();
-            let radius = file_loader
-                .model_info
-                .col_model(ped.ped.physical.entity.model_index.max(0) as usize)
+            let radius = file_loader.collision_model(ped.ped.physical.entity.model_index.max(0) as usize)
                 .map_or(0.8, |model| model.bounding_sphere.radius);
             Some((handle, position.x, position.y, radius))
         }));
@@ -2170,8 +2156,8 @@ pub(crate) fn process_script_entity_collisions(
                 continue;
             };
             let (Some(vehicle_model), Some(ped_model)) = (
-                file_loader.model_info.col_model(vehicle_model_id),
-                file_loader.model_info.col_model(ped_model_id),
+                file_loader.collision_model(vehicle_model_id),
+                file_loader.collision_model(ped_model_id),
             ) else {
                 continue;
             };
@@ -2417,7 +2403,7 @@ pub(crate) fn process_script_entity_collisions(
             } else {
                 raw_model as usize
             };
-            let model = file_loader.model_info.col_model(model_id)?;
+            let model = file_loader.collision_model(model_id)?;
             let mut collision_matrix = player.ped.physical.entity.matrix;
             let collision_probe = player.dynamic_collision_probe;
             if let Some(probe) = collision_probe {
@@ -2453,7 +2439,7 @@ pub(crate) fn process_script_entity_collisions(
             .map_or((false, false), |vehicle| {
                 (true, matches!(vehicle, crate::control::ScriptEntities::ScriptVehicleRef::Boat { .. }))
             });
-        let Some(player_model) = file_loader.model_info.col_model(player_model_id) else {
+        let Some(player_model) = file_loader.collision_model(player_model_id) else {
             continue;
         };
         let mut collision_retry = 0_usize;
@@ -2494,7 +2480,7 @@ pub(crate) fn process_script_entity_collisions(
                 else {
                     continue;
                 };
-                let Some(vehicle_model) = file_loader.model_info.col_model(vehicle_model_id) else {
+                let Some(vehicle_model) = file_loader.collision_model(vehicle_model_id) else {
                     continue;
                 };
                 let contacts = CCollision::process_col_models_spheres(
@@ -2585,7 +2571,7 @@ pub(crate) fn process_script_entity_collisions(
                     else {
                         continue;
                     };
-                    let Some(ped_model) = file_loader.model_info.col_model(ped_model_id) else {
+                    let Some(ped_model) = file_loader.collision_model(ped_model_id) else {
                         continue;
                     };
                     let contacts = CCollision::process_col_models_spheres(
@@ -2663,7 +2649,7 @@ pub(crate) fn process_script_entity_collisions(
                     else {
                         continue;
                     };
-                    let Some(object_model) = file_loader.model_info.col_model(object_model_id)
+                    let Some(object_model) = file_loader.collision_model(object_model_id)
                     else {
                         continue;
                     };
@@ -2960,7 +2946,7 @@ pub(crate) fn process_script_entity_collisions(
         let Some(handle_a) = script_entities.index.vehicle_handle_for_entity(entity_a) else { continue; };
         let Some(source) = script_entities.vehicle_get(handle_a) else { continue; };
         let source = source.base();
-        let Some(model) = file_loader.model_info.col_model(source.physical.entity.model_index.max(0) as usize) else {
+        let Some(model) = file_loader.collision_model(source.physical.entity.model_index.max(0) as usize) else {
             warn_once!("vehicle_pair_waiting_original_col");
             continue;
         };
@@ -3002,8 +2988,8 @@ pub(crate) fn process_script_entity_collisions(
                 continue;
             };
             let (Some(model_a), Some(model_b)) = (
-                file_loader.model_info.col_model(model_a_id),
-                file_loader.model_info.col_model(model_b_id),
+                file_loader.collision_model(model_a_id),
+                file_loader.collision_model(model_b_id),
             ) else {
                 warn_once!("vehicle_pair_waiting_original_col");
                 continue;
@@ -3462,9 +3448,7 @@ pub(crate) fn player_dynamic_motion_candidates(
         if !base.physical.entity.flags.uses_collision {
             continue;
         }
-        let Some(col) = file_loader
-            .model_info
-            .col_model(base.physical.entity.model_index.max(0) as usize)
+        let Some(col) = file_loader.collision_model(base.physical.entity.model_index.max(0) as usize)
         else {
             continue;
         };
@@ -3486,9 +3470,7 @@ pub(crate) fn player_dynamic_motion_candidates(
         {
             continue;
         }
-        let Some(col) = file_loader
-            .model_info
-            .col_model(other.ped.physical.entity.model_index.max(0) as usize)
+        let Some(col) = file_loader.collision_model(other.ped.physical.entity.model_index.max(0) as usize)
         else {
             continue;
         };
@@ -3508,7 +3490,7 @@ pub(crate) fn player_dynamic_motion_candidates(
         if !object.uses_collision {
             continue;
         }
-        let Some(col) = file_loader.model_info.col_model(object.model_index) else {
+        let Some(col) = file_loader.collision_model(object.model_index) else {
             continue;
         };
         if swept_col_bound_spheres_maybe_overlap(
@@ -3535,7 +3517,7 @@ pub(crate) fn player_object_position_contact(
     if !object.uses_collision {
         return false;
     }
-    let Some(object_col) = file_loader.model_info.col_model(object.model_index) else {
+    let Some(object_col) = file_loader.collision_model(object.model_index) else {
         return false;
     };
     let Some(player_col) = player_collision_col_model(ped, file_loader) else {
@@ -3570,9 +3552,7 @@ pub(crate) fn player_dynamic_motion_contact_from_candidates(
         if !base.physical.entity.flags.uses_collision {
             continue;
         }
-        let Some(col) = file_loader
-            .model_info
-            .col_model(base.physical.entity.model_index.max(0) as usize)
+        let Some(col) = file_loader.collision_model(base.physical.entity.model_index.max(0) as usize)
         else {
             continue;
         };
@@ -3603,9 +3583,7 @@ pub(crate) fn player_dynamic_motion_contact_from_candidates(
         {
             continue;
         }
-        let Some(col) = file_loader
-            .model_info
-            .col_model(other.ped.physical.entity.model_index.max(0) as usize)
+        let Some(col) = file_loader.collision_model(other.ped.physical.entity.model_index.max(0) as usize)
         else {
             continue;
         };
@@ -3766,9 +3744,7 @@ pub(crate) fn player_physical_process_shift_target(
             if !base.physical.entity.flags.uses_collision {
                 continue;
             }
-            let Some(col) = file_loader
-                .model_info
-                .col_model(base.physical.entity.model_index.max(0) as usize)
+            let Some(col) = file_loader.collision_model(base.physical.entity.model_index.max(0) as usize)
             else {
                 continue;
             };
@@ -3799,9 +3775,7 @@ pub(crate) fn player_physical_process_shift_target(
                 {
                 continue;
             }
-            let Some(col) = file_loader
-                .model_info
-                .col_model(other.ped.physical.entity.model_index.max(0) as usize)
+            let Some(col) = file_loader.collision_model(other.ped.physical.entity.model_index.max(0) as usize)
             else {
                 continue;
             };
@@ -3831,7 +3805,7 @@ pub(crate) fn player_physical_process_shift_target(
         if ped.physical.entity.flags.has_hit_wall && !can_shift {
             continue;
         }
-        let Some(col) = file_loader.model_info.col_model(object.model_index) else {
+        let Some(col) = file_loader.collision_model(object.model_index) else {
             continue;
         };
         if !col_bound_spheres_overlap(&player_matrix, player_col, &object.matrix, col) {
@@ -3860,7 +3834,7 @@ fn player_collision_col_model<'a>(
     };
     // CPed::ProcessEntityCollision always uses GetColModel(GetModelIndex()).
     // GroundHit is a weapon hit model, including while this actor is dying.
-    let col = file_loader.model_info.col_model(model_index);
+    let col = file_loader.collision_model(model_index);
     if col.is_none() {
         bevy::log::warn_once!(model_index, "ped_physical_waiting_original_col_model");
     }
@@ -4229,7 +4203,7 @@ mod ped_static_motion_tests {
             assert!(player_ped_static_contacts_for_position(above,
                 ped.physical.entity.matrix, MI_PLAYER, false, &file_loader).is_empty());
             assert!(std::ptr::eq(player_collision_col_model(&ped, &file_loader).unwrap(),
-                file_loader.model_info.col_model(MI_PLAYER).unwrap()));
+                file_loader.collision_model(MI_PLAYER).unwrap()));
             let landed = first_player_ped_static_collision(above,
                 CVector::new(0.0, 0.0, 1.02), ped.physical.entity.matrix,
                 MI_PLAYER, &ped, &file_loader, 1.0);
@@ -4291,7 +4265,7 @@ pub(crate) fn player_ped_static_contacts_for_position(
         [matrix.forward.x, matrix.forward.y, matrix.forward.z],
         [matrix.up.x, matrix.up.y, matrix.up.z],
     ];
-    let Some(moving_col) = file_loader.model_info.col_model(model_index) else {
+    let Some(moving_col) = file_loader.collision_model(model_index) else {
         bevy::log::warn_once!(model_index, "ped_physical_waiting_original_col_model");
         return Vec::new();
     };
@@ -5014,9 +4988,7 @@ pub(crate) fn object_collision_substeps(
     let response_case = object.special_collision_response_cases;
     let (threshold_sq, step_size) =
         if response_case == CollisionSpecialResponseCase::COLLRESPONSE_LAMPOST as u8 {
-            let radius = file_loader
-                .model_info
-                .col_model(object.physical.entity.model_index.max(0) as usize)
+            let radius = file_loader.collision_model(object.physical.entity.model_index.max(0) as usize)
                 .map(|col| col.bounding_sphere.radius)
                 .unwrap_or(0.0);
             let up = object

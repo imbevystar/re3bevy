@@ -4,7 +4,7 @@
 
 use super::CarLightShadowIntent;
 use crate::{
-    collision::ColModel::CColModel,
+    collision::ColModel::{CColModel, CColVector},
     core::World::{CWorld, CWorldEntity, EEntityType, NUMSECTORS_X, world_entity_gta_matrix},
     modelinfo::ModelInfo::CModelInfo,
 };
@@ -163,7 +163,15 @@ fn cast_entity(
     let uvs = [Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y];
     let mut polygon = Vec::with_capacity(8);
     let mut scratch = Vec::with_capacity(8);
-    for (index, triangle) in col.triangles.iter().enumerate() {
+    let mut candidates = Vec::new();
+    col.triangle_spatial_index.box_candidates(
+        col.triangles.len(),
+        CColVector::new(min.x, min.y, min_z),
+        CColVector::new(max.x, max.y, max_z),
+        &mut candidates,
+    );
+    for index in candidates {
+        let triangle = &col.triangles[index];
         diagnostics.tested_triangles += 1;
         let (Some(plane), Some(a), Some(b), Some(c)) = (
             col.triangle_plane(index),

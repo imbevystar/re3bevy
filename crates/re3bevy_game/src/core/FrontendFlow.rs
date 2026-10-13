@@ -6,7 +6,7 @@
 //! original `menu.txd` file and are laid out with re3 menu coordinates.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fs,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -284,6 +284,9 @@ pub struct FrontendTxdTextures {
     pub images: BTreeMap<String, Handle<Image>>,
     pub(crate) bitmaps: BTreeMap<String, RgbaTexture>,
     text_images: BTreeMap<String, Handle<Image>>,
+    glyph_rasters: GlyphRasterCache,
+    text_image_order: VecDeque<(String, usize)>,
+    text_image_bytes: usize,
     // CFont renders its glyph quads directly in physical screen coordinates.
     // Bitmap UI text must therefore be produced at this scale, not rasterized
     // at 640x448 and filtered a second time by an ImageNode stretch.
@@ -292,6 +295,12 @@ pub struct FrontendTxdTextures {
 }
 
 impl FrontendTxdTextures {
+    fn clear_text_images(&mut self) {
+        self.text_images.clear();
+        self.text_image_order.clear();
+        self.text_image_bytes = 0;
+    }
+
     pub(crate) fn text_scale(&self) -> (f32, f32) {
         (self.text_render_scale_x, self.text_render_scale_y)
     }
@@ -311,6 +320,9 @@ impl Default for FrontendTxdTextures {
             images: BTreeMap::new(),
             bitmaps: BTreeMap::new(),
             text_images: BTreeMap::new(),
+            glyph_rasters: GlyphRasterCache::default(),
+            text_image_order: VecDeque::new(),
+            text_image_bytes: 0,
             text_render_scale_x: 1.0,
             text_render_scale_y: 1.0,
         }
@@ -2612,7 +2624,8 @@ pub fn sync_frontend_window_settings(
         // Handles in existing ImageNodes are replaced by refresh_text below.
         // Keeping a logical-scale cache would make Bevy filter the glyph image
         // a second time, unlike CFont's direct sprite-bank path.
-        txd.text_images.clear();
+        txd.clear_text_images();
+        txd.glyph_rasters.clear();
     }
 }
 
@@ -5689,6 +5702,7 @@ pub(crate) fn bitmap_text_handle(
         layer_offset,
         metrics,
         atlas,
+        &mut txd.glyph_rasters,
     );
     let mut image = Image::new(
         Extent3d {
@@ -5713,6 +5727,16 @@ pub(crate) fn bitmap_text_handle(
         ..ImageSamplerDescriptor::default()
     });
     let handle = images.add(image);
+    let bytes = metrics.bitmap_width as usize * metrics.bitmap_height as usize * 4;
+    // Cached text must not retain every clock/money/message ever displayed.
+    // Eviction drops only our handle; visible ImageNodes keep their assets live.
+    while txd.text_image_bytes + bytes > 32 * 1024 * 1024 {
+        let Some((old, size)) = txd.text_image_order.pop_front() else { break; };
+        txd.text_images.remove(&old);
+        txd.text_image_bytes = txd.text_image_bytes.saturating_sub(size);
+    }
+    txd.text_image_bytes += bytes;
+    txd.text_image_order.push_back((cache_key.clone(), bytes));
     txd.text_images.insert(cache_key, handle.clone());
     Some(RenderedBitmapText {
         handle,
@@ -5787,6 +5811,7 @@ fn render_bitmap_text_rgba(
     layer_offset: Vec2,
     metrics: BitmapTextMetrics,
     atlas: &RgbaTexture,
+    glyph_rasters: &mut GlyphRasterCache,
 ) -> Vec<u8> {
     let out_w = metrics.bitmap_width as u32;
     let out_h = metrics.bitmap_height as u32;
@@ -5807,6 +5832,7 @@ fn render_bitmap_text_rgba(
             Vec2::ZERO,
             MENU_TEXT_SHADOW,
             atlas,
+            glyph_rasters,
         );
     }
     rasterize_text_layer(
@@ -5820,6 +5846,7 @@ fn render_bitmap_text_rgba(
         layer_offset,
         colour,
         atlas,
+        glyph_rasters,
     );
     compensate_rw_gamma_space_alpha(&mut out);
     out
@@ -5857,6 +5884,7 @@ fn rasterize_text_layer(
     layer_offset: Vec2,
     colour: [u8; 4],
     atlas: &RgbaTexture,
+    glyph_rasters: &mut GlyphRasterCache,
 ) {
     let style = style.clamp(0, 2) as usize;
     let mut cursor_x = 0.0_f32;
@@ -5883,6 +5911,8 @@ fn rasterize_text_layer(
             scale_y,
             colour,
             atlas,
+            style == FONT_BANK as usize,
+            glyph_rasters,
         );
         cursor_x += FONT_SIZE[style][glyph.min(FONT_SIZE[style].len() - 1)] as f32 * scale_x;
     }
@@ -5893,61 +5923,88 @@ fn glyph_index(ch: char) -> usize {
     value.saturating_sub(' ' as u32).min(192) as usize
 }
 
+// Cache sampled original glyphs, not gameplay text or colours. A new clock,
+// money string or menu selection can reuse the same bilinear atlas samples.
+// Exact subpixel phases preserve RenderWare glyph positions and edge coverage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct GlyphRasterKey {
+    font_bank: bool,
+    glyph: usize,
+    scale: [u32; 2],
+    phase: [u32; 2],
+    size: [u32; 2],
+}
+
+#[derive(Default)]
+struct GlyphRasterCache {
+    rasters: BTreeMap<GlyphRasterKey, Vec<[u8; 4]>>,
+    bytes: usize,
+}
+
+impl GlyphRasterCache {
+    fn clear(&mut self) {
+        self.rasters.clear();
+        self.bytes = 0;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn rasterize_glyph(
-    out: &mut [u8],
-    out_w: u32,
-    out_h: u32,
-    origin_x: f32,
-    origin_y: f32,
-    glyph: usize,
-    scale_x: f32,
-    scale_y: f32,
-    colour: [u8; 4],
-    atlas: &RgbaTexture,
+    out: &mut [u8], out_w: u32, out_h: u32,
+    origin_x: f32, origin_y: f32, glyph: usize,
+    scale_x: f32, scale_y: f32, colour: [u8; 4], atlas: &RgbaTexture,
+    font_bank: bool, cache: &mut GlyphRasterCache,
 ) {
-    if glyph == 0 {
-        return;
-    }
+    if glyph == 0 { return; }
     let quad_w = (32.0 * scale_x).max(f32::EPSILON);
     let quad_h = (40.0 * scale_y * 0.5).max(f32::EPSILON);
-    let end_x = origin_x + quad_w;
-    let end_y = origin_y + quad_h;
     let start_x = origin_x.floor().max(0.0) as u32;
     let start_y = origin_y.floor().max(0.0) as u32;
-    let end_x_px = end_x.ceil().min(out_w as f32) as u32;
-    let end_y_px = end_y.ceil().min(out_h as f32) as u32;
-
-    let xoff = (glyph % 16) as f32;
-    let yoff = (glyph / 16) as f32;
-    let u0 = xoff / 16.0;
-    let v0 = yoff / 12.8;
-    let u1 = (xoff + 1.0) / 16.0 - 0.001;
-    let v1 = (yoff + 1.0) / 12.8 - 0.002;
-
-    for out_y in start_y..end_y_px {
-        let pixel_y = out_y as f32 + 0.5;
-        if pixel_y < origin_y || pixel_y >= end_y {
-            continue;
+    let width = ((origin_x + quad_w).ceil().max(0.0) as u32).saturating_sub(start_x);
+    let height = ((origin_y + quad_h).ceil().max(0.0) as u32).saturating_sub(start_y);
+    let phase_x = origin_x - start_x as f32;
+    let phase_y = origin_y - start_y as f32;
+    let key = GlyphRasterKey {
+        font_bank, glyph, scale: [scale_x.to_bits(), scale_y.to_bits()],
+        phase: [phase_x.to_bits(), phase_y.to_bits()], size: [width, height],
+    };
+    if !cache.rasters.contains_key(&key) {
+        let bytes = width as usize * height as usize * 4;
+        // Keep residency bounded across arbitrary text and fractional scales.
+        if cache.bytes + bytes > 8 * 1024 * 1024 { cache.clear(); }
+        let xoff = (glyph % 16) as f32;
+        let yoff = (glyph / 16) as f32;
+        let u0 = xoff / 16.0;
+        let v0 = yoff / 12.8;
+        let u1 = (xoff + 1.0) / 16.0 - 0.001;
+        let v1 = (yoff + 1.0) / 12.8 - 0.002;
+        let mut texels = vec![[0; 4]; width as usize * height as usize];
+        for y in 0..height {
+            let py = y as f32 + 0.5 - phase_y;
+            if py < 0.0 || py >= quad_h { continue; }
+            let v = v0 + (v1 - v0) * (py / quad_h);
+            for x in 0..width {
+                let px = x as f32 + 0.5 - phase_x;
+                if px < 0.0 || px >= quad_w { continue; }
+                let u = u0 + (u1 - u0) * (px / quad_w);
+                texels[(y * width + x) as usize] = texture_rgba_linear(atlas, u, v);
+            }
         }
-        let v = v0 + (v1 - v0) * ((pixel_y - origin_y) / quad_h);
-        for out_x in start_x..end_x_px {
-            let pixel_x = out_x as f32 + 0.5;
-            if pixel_x < origin_x || pixel_x >= end_x {
-                continue;
-            }
-            let u = u0 + (u1 - u0) * ((pixel_x - origin_x) / quad_w);
-            let texel = texture_rgba_linear(atlas, u, v);
-            if texel[3] == 0 {
-                continue;
-            }
+        cache.bytes += bytes;
+        cache.rasters.insert(key, texels);
+    }
+    let texels = &cache.rasters[&key];
+    for y in 0..height.min(out_h.saturating_sub(start_y)) {
+        for x in 0..width.min(out_w.saturating_sub(start_x)) {
+            let texel = texels[(y * width + x) as usize];
+            if texel[3] == 0 { continue; }
             let modulated = [
                 ((u16::from(colour[0]) * u16::from(texel[0])) / 255) as u8,
                 ((u16::from(colour[1]) * u16::from(texel[1])) / 255) as u8,
                 ((u16::from(colour[2]) * u16::from(texel[2])) / 255) as u8,
                 colour[3],
             ];
-            let dst = (out_y as usize * out_w as usize + out_x as usize) * 4;
+            let dst = ((start_y + y) as usize * out_w as usize + (start_x + x) as usize) * 4;
             alpha_blend_pixel(out, dst, modulated, texel[3]);
         }
     }
@@ -6027,6 +6084,8 @@ fn ensure_frontend_textures(
         cache.loaded = true;
         return;
     };
+    cache.glyph_rasters.clear();
+    cache.clear_text_images();
     for txd_name in ["menu.txd", "frontend.txd", "fonts.txd"] {
         let path = install.root().join("models").join(txd_name);
         let Ok(bytes) = fs::read(&path) else {
@@ -6074,6 +6133,8 @@ pub(crate) fn ensure_hud_textures(
     // normal frontend happens to preload fonts.txd, but gameplay must not
     // depend on having visited a menu first. radar00..radar63 remain streamed
     // TXD entries inside GTA3.IMG and are synchronized from CTxdStore.
+    cache.glyph_rasters.clear();
+    cache.clear_text_images();
     for txd_name in ["hud.txd", "fonts.txd"] {
         let path = install.root().join("models").join(&txd_name);
         let Ok(bytes) = fs::read(&path) else {
@@ -6115,5 +6176,57 @@ impl RgbaTexture {
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::default(),
         )
+    }
+}
+
+#[cfg(test)]
+mod glyph_raster_tests {
+    use super::*;
+
+    #[test]
+    fn cached_glyphs_preserve_bilinear_texels_subpixel_positions_and_colours() {
+        let atlas = RgbaTexture {
+            width: 64, height: 64,
+            rgba: (0..64 * 64 * 4).map(|i| ((i * 37 + i / 7) % 256) as u8).collect(),
+        };
+        let mut cache = GlyphRasterCache::default();
+        for (sx, sy) in [(0.38, 0.70), (1.6, 1.8), (2.15, 0.95)] {
+            for (ox, oy) in [(0.0, 0.0), (0.33, 0.78), (254.33, 4.78)] {
+                for glyph in [1, 17, 42, 127, 192] {
+                    for colour in [[255, 255, 255, 255], [175, 100, 50, 90], [0, 0, 0, 255]] {
+                        let (w, h) = (384u32, 80u32);
+                        let mut actual = vec![0; (w * h * 4) as usize];
+                        rasterize_glyph(&mut actual, w, h, ox, oy, glyph, sx, sy, colour, &atlas, false, &mut cache);
+                        let mut expected = vec![0; actual.len()];
+                        // Independent screen-space reference samples the atlas
+                        // for every output pixel, without phase normalization.
+                        let qw = 32.0 * sx;
+                        let qh = 20.0 * sy;
+                        let u0 = (glyph % 16) as f32 / 16.0;
+                        let v0 = (glyph / 16) as f32 / 12.8;
+                        let u1 = ((glyph % 16) + 1) as f32 / 16.0 - 0.001;
+                        let v1 = ((glyph / 16) + 1) as f32 / 12.8 - 0.002;
+                        for y in 0..h {
+                            let py = y as f32 + 0.5;
+                            if py < oy || py >= oy + qh { continue; }
+                            let v = v0 + (v1-v0) * ((py-oy)/qh);
+                            for x in 0..w {
+                                let px = x as f32 + 0.5;
+                                if px < ox || px >= ox + qw { continue; }
+                                let texel = texture_rgba_linear(&atlas, u0 + (u1-u0) * ((px-ox)/qw), v);
+                                let mut modulated = colour;
+                                for c in 0..3 { modulated[c] = (colour[c] as u16 * texel[c] as u16 / 255) as u8; }
+                                alpha_blend_pixel(&mut expected, ((y * w + x) * 4) as usize, modulated, texel[3]);
+                            }
+                        }
+                        assert_eq!(actual, expected, "glyph={glyph} scale=({sx},{sy}) origin=({ox},{oy})");
+                    }
+                }
+            }
+        }
+        let before = cache.rasters.len();
+        let mut out = vec![0; 384 * 80 * 4];
+        rasterize_glyph(&mut out, 384, 80, 0.0, 0.0, 1, 0.38, 0.70, [10, 20, 30, 255], &atlas, false, &mut cache);
+        assert_eq!(cache.rasters.len(), before, "colour changes must reuse sampled glyphs");
     }
 }

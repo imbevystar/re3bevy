@@ -693,7 +693,7 @@ pub(crate) fn process_script_object_control(
         if let Some(((water, loader), weather)) = water_context {
             if !object.physical.entity.flags.is_static {
                 let model_id = object.physical.entity.model_index.max(0) as usize;
-                if let Some(col) = loader.model_info.col_model(model_id) {
+                if let Some(col) = loader.collision_model(model_id) {
                     let min = CVector::new(col.bounding_box.min.x, col.bounding_box.min.y, col.bounding_box.min.z);
                     let max = CVector::new(col.bounding_box.max.x, col.bounding_box.max.y, col.bounding_box.max.z);
                     if let Some(result) = crate::vehicles::Floater::process_buoyancy(

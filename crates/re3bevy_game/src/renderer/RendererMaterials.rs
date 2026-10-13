@@ -620,6 +620,10 @@ impl Material for GtaWaterMaterial {
 }
 
 impl Material for GtaUnlitMaterial {
+    fn vertex_shader() -> ShaderRef {
+        ShaderAssets::RW_UNLIT.into()
+    }
+
     fn fragment_shader() -> ShaderRef {
         ShaderAssets::RW_UNLIT.into()
     }

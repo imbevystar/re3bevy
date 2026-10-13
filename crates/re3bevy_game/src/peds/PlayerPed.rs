@@ -6720,7 +6720,7 @@ pub(crate) fn player_dynamic_vertical_hit_entity(
     if !uses_collision {
         return None;
     }
-    let col = file_loader.model_info.col_model(model_index)?;
+    let col = file_loader.collision_model(model_index)?;
     // Native reaches this query through sector/bound-sphere candidates. Keep
     // the line primitive local as well; the broad rejection is important for
     // the per-player support probes that run every frame.

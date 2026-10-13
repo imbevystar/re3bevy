@@ -65,8 +65,11 @@ pub struct GtaPcEnvParams {
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, PartialEq)]
+#[data(0, GtaPcEnvParams, binding_array(10))]
+// Two samplers per material: keep the same 128-descriptor budget as RW_UNLIT.
+// Actor-origin changes can then update slab data without rebuilding GPU binds.
+#[bindless(limit(64))]
 pub struct GtaPcEnvMaterial {
-    #[uniform(0)]
     pub params: GtaPcEnvParams,
     #[texture(1)]
     #[sampler(2)]
@@ -74,9 +77,15 @@ pub struct GtaPcEnvMaterial {
     #[texture(3)]
     #[sampler(4)]
     pub environment_texture: Handle<Image>,
-    #[storage(5, read_only)]
+    #[storage(5, read_only, binding_array(11))]
     pub global_lighting: Handle<ShaderBuffer>,
     pub alpha_mode: AlphaMode,
+}
+
+impl From<&GtaPcEnvMaterial> for GtaPcEnvParams {
+    fn from(material: &GtaPcEnvMaterial) -> Self {
+        material.params
+    }
 }
 
 impl GtaPcEnvMaterial {
@@ -167,6 +176,20 @@ pub struct GtaPcEnvDiagnostics {
     /// Required reflection01 is unresolved; the original diffuse draw remains.
     pub missing_environment_frames: u64,
     pub missing_source_material_frames: u64,
+}
+
+/// Reinstating a source draw after MatFX/Neo must publish any CPU-only origin
+/// updates retained while that source material wasn't being rendered.
+pub(super) fn refresh_restored_original_materials(
+    mut originals: ResMut<Assets<GtaUnlitMaterial>>,
+    restored: Query<&MeshMaterial3d<GtaUnlitMaterial>, (With<GtaOriginalMaterial>, Changed<MeshMaterial3d<GtaUnlitMaterial>>)>,
+) {
+    for handle in &restored {
+        if let Some(material) = originals.get_mut(&handle.0) {
+            // Publish a Modified event even though the CPU value is current.
+            let _ = material.into_inner();
+        }
+    }
 }
 
 pub(super) fn sync_pc_environment_materials(
@@ -282,6 +305,34 @@ pub(super) fn sync_pc_environment_materials(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_source_draw_publishes_the_current_cpu_origin() {
+        use bevy::{asset::AssetPlugin, ecs::message::MessageCursor};
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<GtaUnlitMaterial>()
+            .add_systems(Update, refresh_restored_original_materials);
+        let handle = app.world_mut().resource_mut::<Assets<GtaUnlitMaterial>>()
+            .add(GtaUnlitMaterial::from_gta(Color::WHITE, None, false, false, [0.0; 3], 0.0));
+        let entity = app.world_mut().spawn(GtaOriginalMaterial(handle.clone())).id();
+        app.update();
+        let mut cursor = MessageCursor::<AssetEvent<GtaUnlitMaterial>>::default();
+        let messages = app.world().resource::<Messages<AssetEvent<GtaUnlitMaterial>>>();
+        cursor.read(messages).for_each(drop);
+        let origin = Vec4::new(12.0, 3.0, -8.0, 1.0);
+        app.world_mut().resource_mut::<Assets<GtaUnlitMaterial>>()
+            .get_mut_untracked(&handle).unwrap().uniforms.actor_origin = origin;
+        app.update();
+        assert!(!cursor.read(app.world().resource::<Messages<AssetEvent<GtaUnlitMaterial>>>())
+            .any(|event| matches!(event, AssetEvent::Modified { id } if *id == handle.id())));
+        app.world_mut().entity_mut(entity).insert(MeshMaterial3d(handle.clone()));
+        app.update();
+        assert!(cursor.read(app.world().resource::<Messages<AssetEvent<GtaUnlitMaterial>>>())
+            .any(|event| matches!(event, AssetEvent::Modified { id } if *id == handle.id())));
+        assert_eq!(app.world().resource::<Assets<GtaUnlitMaterial>>()
+            .get(&handle).unwrap().uniforms.actor_origin, origin);
+    }
 
     #[test]
     fn detached_wheels_follow_vehicle_owner_while_world_specular_stays_default() {

@@ -762,10 +762,21 @@ fn sync_runtime_entity_model_refs(
     }
 
     for (&key, &model_index) in dynamic_desired.iter() {
-        if refs.owned.get(&key).copied() != Some(model_index)
-            && runtime_model_geometry_is_resident(file_loader, model_index)
-        {
+        if refs.owned.get(&key).copied() == Some(model_index) {
+            continue;
+        }
+        if runtime_model_geometry_is_resident(file_loader, model_index) {
             to_add.push((key, model_index));
+        } else if !matches!(key.0, GtaRuntimeModelRefSource::Object)
+            || file_loader.model_info.get_model_info(model_index)
+                .is_some_and(|model| model.base().default_col_model.is_none())
+        {
+            // A live actor still requires its clump even before its first
+            // render. Pin it on residency; do not leave construction/effects
+            // waiting forever for a model absent from camera-sector requests.
+            streaming.request_model_with_adapter(
+                model_index, crate::core::Streaming::STREAMFLAGS_DEPENDENCY, &mut **file_loader,
+            );
         }
     }
 
@@ -1489,7 +1500,8 @@ fn process_car_generators_near_player(
     timer: Option<Res<CTimer>>,
     mut script_entities: Option<ScriptEntityWorld>,
     mut pools: Option<ResMut<CPools>>,
-    file_loader: Option<Res<CFileLoader>>,
+    mut file_loader: Option<ResMut<CFileLoader>>,
+    mut streaming: Option<ResMut<CStreaming>>,
     mut general: Option<ResMut<CGeneral>>,
     handling_manager: Option<Res<cHandlingDataMgr>>,
     mut car_ctrl: Option<ResMut<crate::control::CarCtrl::CCarCtrl>>,
@@ -1559,11 +1571,12 @@ fn process_car_generators_near_player(
     if intents.is_empty() {
         return;
     }
-    let (Some(script_entities), Some(pools), Some(file_loader), Some(general)) = (
+    let (Some(script_entities), Some(pools), Some(file_loader), Some(general), Some(streaming)) = (
         script_entities.as_mut(),
         pools.as_mut(),
-        file_loader.as_ref(),
+        file_loader.as_deref_mut(),
         general.as_mut(),
+        streaming.as_deref_mut(),
     ) else {
         bevy::log::debug!(
             "CTheCarGenerators::Process intents={} but pools/world not ready",
@@ -1577,6 +1590,11 @@ fn process_car_generators_near_player(
         // re3 DoInternalProcessing: RequestModel + HasModelLoaded wait runs
         // before any spawn bookkeeping; an unloaded model retries next stride
         // without consuming a use or touching the timer.
+        let Ok(model_index) = usize::try_from(intent.model_index) else { continue; };
+        streaming.request_model_with_adapter(model_index, crate::core::Streaming::STREAMFLAGS_DEPENDENCY, file_loader);
+        if !streaming.has_model_loaded(model_index) {
+            continue;
+        }
         let Some(generator_col) = file_loader
             .model_info
             .col_model(intent.model_index.max(0) as usize)
@@ -3564,6 +3582,7 @@ fn update_explosion_and_vehicle_lights(
     mut shadows: Option<ResMut<CShadows>>,
     cutscene: Option<Res<CCutsceneMgr>>,
     mut light_actors: super::VehicleLightingAccess::VehicleLightingAccess,
+    mut special_fx: Option<ResMut<CSpecialFX>>,
 ) {
     let now_ms = timer
         .as_ref()
@@ -4291,6 +4310,17 @@ fn update_explosion_and_vehicle_lights(
         let alarm_off = alarm && !alarm_on;
         let lights_active =
             (drive.engine_on && appearance.lights_on) || alarm_on || alarm_off;
+
+        if let Some(fx) = special_fx.as_deref_mut() {
+            super::VehicleLightingAccess::register_automobile_bright_lights(
+                fx, &matrix, camera_pos, [head_l, head_r], [tail_l, tail_r],
+                [light_ok(eLights::VEHLIGHT_FRONT_LEFT), light_ok(eLights::VEHLIGHT_FRONT_RIGHT),
+                 light_ok(eLights::VEHLIGHT_REAR_LEFT), light_ok(eLights::VEHLIGHT_REAR_RIGHT)],
+                handling, lights_active, vehicle.physical.entity.flags.no_bright_head_lights,
+                matches!(status, eEntityStatus::STATUS_ABANDONED | eEntityStatus::STATUS_WRECKED),
+                behindness, drive.gas_pedal, drive.brake_pedal,
+            );
+        }
 
         if lights_active {
             if behindness < 0.0 {
@@ -7523,6 +7553,7 @@ fn flush_special_fx_meshes(
     mut texture_cache: ResMut<GtaWorldTextureCache>,
     mut immediate_cache: ResMut<GtaImmediateMeshCache>,
     mut persistent_query: PersistentBillboardQuery,
+    mut bright_lights: Local<car_light_render::BrightLightMeshBatch>,
 ) {
     let Some(mut special_fx) = special_fx else {
         hide_persistent_billboard_slots(
@@ -7533,48 +7564,45 @@ fn flush_special_fx_meshes(
         return;
     };
     let mut active_count = 0;
+    bright_lights.clear();
 
     for intent in special_fx.drain_bright_light_intents() {
         let flicker = general.as_deref_mut().map_or(0, |general| {
             ((general.get_random_number() & 0xFF) as f32 * 0.2) as u8
         });
-        let [r, g, b] = match intent.light_type {
-            BRIGHTLIGHT_TRAFFIC_GREEN => [flicker, 255, flicker],
-            BRIGHTLIGHT_TRAFFIC_YELLOW => [255, 128, flicker],
-            BRIGHTLIGHT_TRAFFIC_RED => [255, flicker, flicker],
-            _ => continue,
-        };
-        let alpha = if intent.camera_distance < 45.0 {
-            255
+        let (mesh, [r, g, b, alpha]) = if let Some(mesh) = car_light_render::build_vehicle_bright_light_mesh(&intent) {
+            let Some(colour) = car_light_render::vehicle_bright_light_colour(&intent, flicker) else { continue; };
+            (mesh, colour)
         } else {
-            (255.0 * (1.0 - (intent.camera_distance - 45.0) / 15.0)).clamp(0.0, 255.0) as u8
+            let [r, g, b] = match intent.light_type {
+                BRIGHTLIGHT_TRAFFIC_GREEN => [flicker, 255, flicker],
+                BRIGHTLIGHT_TRAFFIC_YELLOW => [255, 128, flicker],
+                BRIGHTLIGHT_TRAFFIC_RED => [255, flicker, flicker],
+                _ => continue,
+            };
+            let alpha = if intent.camera_distance < 45.0 { 255 } else {
+                (255.0 * (1.0 - (intent.camera_distance - 45.0) / 15.0)).clamp(0.0, 255.0) as u8
+            };
+            (build_traffic_bright_light_mesh(&intent), [r, g, b, alpha])
         };
+        bright_lights.append(mesh, Color::srgba_u8(r, g, b, alpha));
+    }
+    if let Some(mesh) = bright_lights.mesh() {
         let entity = update_persistent_mesh_slot(
-            immediate_cache
-                .special_fx_entities
-                .get(active_count)
-                .copied(),
-            build_traffic_bright_light_mesh(&intent),
+            immediate_cache.special_fx_entities.first().copied(),
+            mesh,
             StandardMaterial {
-                base_color: Color::srgba_u8(r, g, b, alpha),
-                unlit: true,
-                alpha_mode: AlphaMode::Blend,
-                double_sided: true,
-                cull_mode: None,
-                ..default()
+                base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Blend,
+                double_sided: true, cull_mode: None, ..default()
             },
-            Transform::IDENTITY,
-            &mut persistent_query,
-            &mut meshes,
-            &mut materials,
-            &mut commands,
+            Transform::IDENTITY, &mut persistent_query, &mut meshes, &mut materials, &mut commands,
         );
-        if let Some(slot) = immediate_cache.special_fx_entities.get_mut(active_count) {
+        if let Some(slot) = immediate_cache.special_fx_entities.first_mut() {
             *slot = entity;
         } else {
             immediate_cache.special_fx_entities.push(entity);
         }
-        active_count += 1;
+        active_count = 1;
     }
 
     let particle_slot = file_loader

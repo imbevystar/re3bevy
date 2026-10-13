@@ -159,10 +159,10 @@ fn land_new_ambient_ped_on_ground(
             ground_z = Some(hit.z);
         }
     }
-    let Some(ground_z) = ground_z else {
-        warn_once!("ambient_ped_landing_waiting_original_ground");
-        return None;
-    };
+    // CPed::ProcessControl only starts landing after its short probe hits.
+    // An airborne ped above/outside that segment is an ordinary no-hit,
+    // not evidence that original ground data is unavailable.
+    let ground_z = ground_z?;
 
     // CPed::ProcessControl (Ped.cpp:2616-2633): the short landing probe
     // precedes walk control and raises the root to FEET_OFFSET above the hit.
@@ -176,6 +176,50 @@ fn land_new_ambient_ped_on_ground(
     };
     ped.flags.is_landing = true;
     Some(sound)
+}
+
+fn next_ambient_wander_node(
+    ped: &mut CPed, progress: &PedWanderProgress, file_loader: &CFileLoader,
+) -> Option<usize> {
+    let position = ped.physical.entity.get_position();
+    let requested_dir = (ped.path_dir as i32).rem_euclid(8) as u8;
+    let mut current_node_fallback = None;
+    for offset in 0..8u8 {
+        let Some((node, next_dir)) = file_loader.path_find.find_next_node_wandering(
+            crate::control::PathFind::PATH_PED,
+            position,
+            ped.last_path_node,
+            (requested_dir + offset) % 8,
+            |from, to| {
+                file_loader.world.process_line_of_sight_buildings_hit(
+                    [from.x, from.y, from.z],
+                    [to.x, to.y, to.z],
+                    &file_loader.model_info,
+                    None,
+                ).is_none()
+            },
+        ) else { continue };
+        // FindNextNodeWandering returns the current node when links
+        // are temporarily blocked. Preserve it as a reanchor after
+        // trying other directions; rejecting it as a missing PATH_PED
+        // node stranded valid peds in IDLE instead of updating lastNode.
+        let same_place = file_loader.path_find.path_nodes.get(node).is_some_and(|target| {
+            (target.pos.x - position.x).hypot(target.pos.y - position.y) < 0.75
+        });
+        if same_place {
+            current_node_fallback = Some((node, next_dir));
+            continue;
+        }
+        if progress.blocked_node == Some(node) {
+            continue;
+        }
+        ped.path_dir = next_dir as i16;
+        return Some(node);
+    }
+    current_node_fallback.map(|(node, next_dir)| {
+        ped.path_dir = next_dir as i16;
+        node
+    })
 }
 
 fn restore_ambient_wander_after_flee(ped: &mut CPed) {
@@ -465,36 +509,7 @@ pub(crate) fn process_ambient_ped_wander(
         }
 
         let position = ped.physical.entity.get_position();
-        let next_node = ped.next_path_node.or_else(|| {
-            let requested_dir = (ped.path_dir as i32).rem_euclid(8) as u8;
-            for offset in 0..8u8 {
-                let Some((node, next_dir)) = file_loader.path_find.find_next_node_wandering(
-                    crate::control::PathFind::PATH_PED,
-                    position,
-                    ped.last_path_node,
-                    (requested_dir + offset) % 8,
-                    |from, to| {
-                        file_loader.world.process_line_of_sight_buildings_hit(
-                            [from.x, from.y, from.z],
-                            [to.x, to.y, to.z],
-                            &file_loader.model_info,
-                            None,
-                        ).is_none()
-                    },
-                ) else { continue };
-                // The native path search can return its current node as a
-                // fallback. It is not a destination if we are already there.
-                let same_place = file_loader.path_find.path_nodes.get(node).is_some_and(|target| {
-                    (target.pos.x - position.x).hypot(target.pos.y - position.y) < 0.75
-                });
-                if progress.blocked_node == Some(node) || same_place {
-                    continue;
-                }
-                ped.path_dir = next_dir as i16;
-                return Some(node);
-            }
-            None
-        });
+        let next_node = ped.next_path_node.or_else(|| next_ambient_wander_node(ped, progress, &file_loader));
         let Some(next_node) = next_node else {
             bevy::log::warn_once!(
                 target: "re3bevy::ped_ai",
@@ -605,6 +620,21 @@ pub(crate) fn process_ambient_ped_wander(
 mod wander_recovery_tests {
     use super::*;
     use crate::peds::PedType::ePedType;
+
+    #[test]
+    fn temporarily_blocked_links_keep_the_native_current_node_fallback() {
+        let mut loader = CFileLoader::default();
+        loader.path_find.num_path_nodes = 1;
+        loader.path_find.num_ped_path_nodes = 1;
+        loader.path_find.path_nodes[0].pos = CVector::ZERO;
+        let mut ped = CPed::new(ePedType::PEDTYPE_CIVMALE, &mut CGeneral::with_seed(3));
+        ped.physical.entity.set_position(CVector::ZERO);
+        ped.last_path_node = Some(0);
+        ped.path_dir = 3;
+        let progress = PedWanderProgress::default();
+        assert_eq!(next_ambient_wander_node(&mut ped, &progress, &loader), Some(0));
+        assert_eq!(ped.path_dir, 0);
+    }
 
     #[test]
     fn civilian_resumes_walking_after_flee_when_previous_state_was_idle() {

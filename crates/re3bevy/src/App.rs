@@ -273,8 +273,8 @@ fn configure_gpu_clustering_capacity(settings: Option<ResMut<GlobalClusterSettin
     let Some(mut settings) = settings else {
         return;
     };
-    if let Some(gpu) = settings.gpu_clustering.as_mut() {
-        gpu.initial_index_list_capacity = gpu.initial_index_list_capacity.max(131_072);
+    if settings.gpu_clustering.as_ref().is_some_and(|gpu| gpu.initial_index_list_capacity < 131_072) {
+        settings.gpu_clustering.as_mut().unwrap().initial_index_list_capacity = 131_072;
     }
 }
 

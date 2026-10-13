@@ -152,13 +152,11 @@ fn should_capture_span(target: &str, name: &str) -> bool {
     ) {
         return true;
     }
-    name.starts_with("bevy_render::mesh::allocator::")
-        || name.starts_with("bevy_render::renderer::")
-        || name.starts_with("bevy_pbr::render::mesh::")
-        || name.starts_with("bevy_pbr::material::")
-        || name.starts_with("bevy_core_pipeline::schedule::")
-        || name.starts_with("bevy_core_pipeline::core_3d::")
-        || name.starts_with("bevy_ui_render::")
+    // Surface acquisition, pipeline compilation, asset preparation and UI
+    // layout can dominate a frame too. Omitting their system spans left only
+    // an unexplained gap inside Render, hiding the actual source of stalls.
+    name.starts_with("bevy_")
+        || matches!(name, "present_frames" | "main_render_schedule")
 }
 
 impl ProfileCapture {
