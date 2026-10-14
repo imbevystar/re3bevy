@@ -4139,78 +4139,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-gta-3"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_app",
- "bevy_ecs",
- "rust_gta_3_assets",
- "rust_gta_3_core",
- "rust_gta_3_dev_arena",
- "rust_gta_3_game",
- "serde_json",
- "tracy-client-sys",
-]
-
-[[package]]
-name = "rust_gta_3_assets"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "rust_gta_3_core",
- "rust_gta_3_formats",
-]
-
-[[package]]
-name = "rust_gta_3_core"
-version = "0.1.0"
-dependencies = [
- "bevy",
-]
-
-[[package]]
-name = "rust_gta_3_debug"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "rust_gta_3_assets",
- "rust_gta_3_core",
- "rust_gta_3_game",
-]
-
-[[package]]
-name = "rust_gta_3_dev_arena"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "rust_gta_3_assets",
- "rust_gta_3_core",
- "rust_gta_3_game",
-]
-
-[[package]]
-name = "rust_gta_3_formats"
-version = "0.1.0"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "rust_gta_3_game"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_enhanced_input",
- "bytemuck",
- "naga",
- "rust_gta_3_assets",
- "rust_gta_3_core",
- "rust_gta_3_formats",
- "rodio",
-]
-
-[[package]]
 name = "read-fonts"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4304,6 +4232,78 @@ dependencies = [
  "serde_derive",
  "typeid",
  "unicode-ident",
+]
+
+[[package]]
+name = "rust-gta-3"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_app",
+ "bevy_ecs",
+ "rust_gta_3_assets",
+ "rust_gta_3_core",
+ "rust_gta_3_dev_arena",
+ "rust_gta_3_game",
+ "serde_json",
+ "tracy-client-sys",
+]
+
+[[package]]
+name = "rust_gta_3_assets"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rust_gta_3_core",
+ "rust_gta_3_formats",
+]
+
+[[package]]
+name = "rust_gta_3_core"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
+name = "rust_gta_3_debug"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rust_gta_3_assets",
+ "rust_gta_3_core",
+ "rust_gta_3_game",
+]
+
+[[package]]
+name = "rust_gta_3_dev_arena"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rust_gta_3_assets",
+ "rust_gta_3_core",
+ "rust_gta_3_game",
+]
+
+[[package]]
+name = "rust_gta_3_formats"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "rust_gta_3_game"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_enhanced_input",
+ "bytemuck",
+ "naga",
+ "rodio",
+ "rust_gta_3_assets",
+ "rust_gta_3_core",
+ "rust_gta_3_formats",
 ]
 
 [[package]]

@@ -60,7 +60,7 @@ Screenshots captured directly from a rust-gta-3 development build:
 
 ## Quick start
 
-You need [Rust](https://www.rust-lang.org/tools/install), a C compiler and a lawfully obtained GTA III PC installation. From the repository root:
+You need [Rust](https://www.rust-lang.org/tools/install), a C compiler and a lawfully obtained GTA III PC installation. From the GTA III directory (`games/rust-gta-3` in `rust-gta-verse`):
 
 ```bash
 cargo run -p rust-gta-3 --profile runtime -- --gta-dir "path/to/GTA III"
