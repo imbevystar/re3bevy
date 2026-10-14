@@ -1,6 +1,6 @@
 ---
 name: re3-ecs-runtime
-description: re3bevy runtime state ownership, actor lifecycle, SCM identity, scheduling, camera and spatial indexes.
+description: RustGta3 runtime state ownership, actor lifecycle, SCM identity, scheduling, camera and spatial indexes.
 ---
 
 ## State ownership

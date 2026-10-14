@@ -4139,74 +4139,74 @@ dependencies = [
 ]
 
 [[package]]
-name = "re3bevy"
+name = "rustgta3"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_app",
  "bevy_ecs",
- "re3bevy_assets",
- "re3bevy_core",
- "re3bevy_dev_arena",
- "re3bevy_game",
+ "rustgta3_assets",
+ "rustgta3_core",
+ "rustgta3_dev_arena",
+ "rustgta3_game",
  "serde_json",
  "tracy-client-sys",
 ]
 
 [[package]]
-name = "re3bevy_assets"
+name = "rustgta3_assets"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "re3bevy_core",
- "re3bevy_formats",
+ "rustgta3_core",
+ "rustgta3_formats",
 ]
 
 [[package]]
-name = "re3bevy_core"
+name = "rustgta3_core"
 version = "0.1.0"
 dependencies = [
  "bevy",
 ]
 
 [[package]]
-name = "re3bevy_debug"
+name = "rustgta3_debug"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "re3bevy_assets",
- "re3bevy_core",
- "re3bevy_game",
+ "rustgta3_assets",
+ "rustgta3_core",
+ "rustgta3_game",
 ]
 
 [[package]]
-name = "re3bevy_dev_arena"
+name = "rustgta3_dev_arena"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "re3bevy_assets",
- "re3bevy_core",
- "re3bevy_game",
+ "rustgta3_assets",
+ "rustgta3_core",
+ "rustgta3_game",
 ]
 
 [[package]]
-name = "re3bevy_formats"
+name = "rustgta3_formats"
 version = "0.1.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
-name = "re3bevy_game"
+name = "rustgta3_game"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_enhanced_input",
  "bytemuck",
  "naga",
- "re3bevy_assets",
- "re3bevy_core",
- "re3bevy_formats",
+ "rustgta3_assets",
+ "rustgta3_core",
+ "rustgta3_formats",
  "rodio",
 ]
 

@@ -43,7 +43,7 @@ already translated into Rust or shaders.
 
 Source reference comments record development provenance; they are not a claim
 of clean-room implementation. Reference-derived identifiers, tables and
-implementations, including `crates/re3bevy_game/src/core/MenuScreens.rs`,
+implementations, including `crates/rustgta3_game/src/core/MenuScreens.rs`,
 `MenuScreensCustom.rs`, `Pools.rs` and `audio/AudioSamples.rs`, need a
 provenance assessment. These examples are not a complete list or a finding
 that every referenced item is protected.
@@ -52,10 +52,10 @@ that every referenced item is protected.
 
 - Upstream: [phoboslab/pl_mpeg](https://github.com/phoboslab/pl_mpeg).
 - Pinned source revision: `c871f2be022ece7ef4f64230b4fb8e1fb9eb6023`.
-- Vendored source: `crates/re3bevy_formats/native/pl_mpeg.h`.
+- Vendored source: `crates/rustgta3_formats/native/pl_mpeg.h`.
 - Copyright (c) Dominic Szablewski (phoboslab.org).
 - License: MIT, reproduced in
-  [LICENSE.pl_mpeg](crates/re3bevy_formats/native/LICENSE.pl_mpeg).
+  [LICENSE.pl_mpeg](crates/rustgta3_formats/native/LICENSE.pl_mpeg).
 - The project wrapper/adaptation is in `native/mpeg.c`; the upstream notice
   must accompany distributions containing the decoder.
 

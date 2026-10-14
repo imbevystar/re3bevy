@@ -1,6 +1,6 @@
 ---
 name: wesl-rendering
-description: re3bevy WESL shaders, bindings, materials, visibility and RenderWare draw behavior.
+description: RustGta3 WESL shaders, bindings, materials, visibility and RenderWare draw behavior.
 ---
 
 ## Rendering contract

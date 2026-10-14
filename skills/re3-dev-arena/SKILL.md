@@ -1,6 +1,6 @@
 ---
 name: re3-dev-arena
-description: re3bevy isolated developer arena and co-op actor fixtures, construction, stage access, presentation and collision.
+description: RustGta3 isolated developer arena and co-op actor fixtures, construction, stage access, presentation and collision.
 ---
 
 # Arena ownership

@@ -13,7 +13,7 @@ description: GTA original-install loading, format parsers, Bevy asset adaptation
 ## Parsing and runtime assets
 
 - Verify the affected re3 loader's layout, endianness, signedness, alignment, sector units, limits, duplicate/order rules, strings and malformed-input behavior.
-- Byte parsing belongs in `re3bevy_formats`; installation and Bevy adaptation belong in asset owners. Gameplay consumes resolved data, not duplicated parsers or installation-specific paths.
+- Byte parsing belongs in `rustgta3_formats`; installation and Bevy adaptation belong in asset owners. Gameplay consumes resolved data, not duplicated parsers or installation-specific paths.
 - Preserve TXD texture lookup/names, DFF model/material relations, residency and streaming through Bevy `Asset`, `Handle`, `Image` and resources. Extend that owner when incomplete; a directly loaded texture that bypasses GTA resolution is not a correct fix.
 - Original files on disk may become native Bevy assets in memory. Do not add a mandatory offline conversion step. Future importer direction is in [re3-port-workflow](../re3-port-workflow/SKILL.md).
 

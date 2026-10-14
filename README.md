@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/branding/re3bevy-logo.webp" alt="re3bevy logo" width="160">
+  <img src="assets/branding/rustgta3-logo.webp" alt="RustGta3 logo" width="160">
 </p>
 
-<h1 align="center">re3bevy</h1>
+<h1 align="center">RustGta3</h1>
 
 <p align="center">
   <strong>GTA 3 (GTA III) in Rust: recreating Grand Theft Auto III gameplay with Bevy ECS.</strong><br>
@@ -25,7 +25,7 @@
   <a href="#license-and-redistribution">License</a>
 </p>
 
-**re3bevy** is an experimental **Grand Theft Auto III reimplementation** built with [Rust](https://www.rust-lang.org/) and the [Bevy game engine](https://bevyengine.org/). It rebuilds GTA III's gameplay and runtime behavior from the ground up, with Bevy ECS managing the live game world. The assets come from **your own GTA III PC installation**.
+**RustGta3** is an experimental **Grand Theft Auto III reimplementation** built with [Rust](https://www.rust-lang.org/) and the [Bevy game engine](https://bevyengine.org/). It rebuilds GTA III's gameplay and runtime behavior from the ground up, with Bevy ECS managing the live game world. The assets come from **your own GTA III PC installation**.
 
 Looking for **GTA 3 Rust**, **GTA III Rust**, **Grand Theft Auto 3 in Rust** or a **GTA 3 Bevy** project? This is an unofficial, experimental rebuild of GTA III's Liberty City gameplay as a Rust game, with Windows and Android ARM64 builds.
 
@@ -35,10 +35,10 @@ Looking for **GTA 3 Rust**, **GTA III Rust**, **Grand Theft Auto 3 in Rust** or 
 
 ## Gameplay
 
-Screenshots captured directly from a re3bevy development build:
+Screenshots captured directly from a RustGta3 development build:
 
 <p align="center">
-  <img src="assets/screenshots/driving.webp" alt="Driving in Liberty City in re3bevy" width="100%">
+  <img src="assets/screenshots/driving.webp" alt="Driving in Liberty City in RustGta3" width="100%">
 </p>
 
 <p align="center">
@@ -63,7 +63,7 @@ Screenshots captured directly from a re3bevy development build:
 You need [Rust](https://www.rust-lang.org/tools/install), a C compiler and a lawfully obtained GTA III PC installation. From the repository root:
 
 ```bash
-cargo run -p re3bevy --profile runtime -- --gta-dir "path/to/GTA III"
+cargo run -p rustgta3 --profile runtime -- --gta-dir "path/to/GTA III"
 ```
 
 <details>
@@ -76,7 +76,7 @@ Copy-Item config/original_gta3_path.txt.example config/original_gta3_path.txt
 notepad config/original_gta3_path.txt
 ```
 
-Then run `cargo run -p re3bevy --profile runtime`. You can also place the executable in your existing GTA III directory.
+Then run `cargo run -p rustgta3 --profile runtime`. You can also place the executable in your existing GTA III directory.
 
 </details>
 
@@ -86,7 +86,9 @@ Want Android or more run options? See [full setup](#full-setup).
 
 ### Game data
 
-Re3bevy reads original textures, geometry, tables, animations and scripts from your installed game. Point it there with `--gta-dir`, the config file above, or by placing the executable in the GTA III directory. Frame limits are set in the in-game Display Settings menu.
+RustGta3 reads original textures, geometry, tables, animations and scripts from your installed game. Point it there with `--gta-dir`, the config file above, or by placing the executable in the GTA III directory. Frame limits are set in the in-game Display Settings menu.
+
+Existing desktop saves and settings migrate automatically to `rustgta3-userfiles` beside the GTA III installation. If both the previous and new folders exist, neither is overwritten.
 
 Installation checks only verify that the required game data is present. They do not authenticate a Rockstar account or prove a purchase, and no Rockstar Store ownership verification is integrated. Owning the game does not grant permission to redistribute the implementation or game data.
 
@@ -96,16 +98,16 @@ Builds need Rust and a C compiler for the embedded MPEG decoder (MSVC Build Tool
 
 ```bash
 # Default development build
-cargo run -p re3bevy
+cargo run -p rustgta3
 
 # More representative gameplay build
-cargo run -p re3bevy --profile runtime
+cargo run -p rustgta3 --profile runtime
 ```
 
 <details>
 <summary><strong>Windows: running without Cargo</strong></summary>
 
-On Windows, `cargo build` and `cargo run` also refresh `dist/re3bevy/` or `dist/re3bevynewgame/` for each game binary built. Open the executable there to run without Cargo. The folder includes its matching runtime DLLs, local path configuration, and the project and vendored decoder notices. Each folder holds the last build of that binary, including when switching profiles.
+On Windows, `cargo build` and `cargo run` also refresh `dist/rustgta3/` or `dist/rustgta3newgame/` for each game binary built. Open the executable there to run without Cargo. The folder includes its matching runtime DLLs, local path configuration, and the project and vendored decoder notices. Each folder holds the last build of that binary, including when switching profiles.
 
 GTA III data stays in your original installation. These are local development outputs, not packages cleared for public redistribution; additional dependency notices and source availability requirements may apply.
 
@@ -119,9 +121,11 @@ With Android Studio's SDK/Command-line Tools and JDK 17 or 21 installed, run:
 ./scripts/build-android.ps1
 ```
 
-The script prepares missing toolchain components and produces a debug-signed APK at `dist/android/re3bevy-arm64.apk` (ARM64, Android 8+, Vulkan).
+The script prepares missing toolchain components and produces a debug-signed APK at `dist/android/rustgta3-arm64.apk` (ARM64, Android 8+, Vulkan).
 
 **The default APK contains no GTA III game data.** Copy your own PC game data to a folder on your phone, then choose that folder on first launch: the installation root containing `anim`, `audio`, `data`, `models` and `text`. The launcher copies the data into app-private storage, and saves/settings survive APK updates. Allow space for both the source folder and the imported copy.
+
+Android now uses the app ID `org.rustgta3.game`. It installs separately from builds using the previous project name, so import your game data again; the previous app keeps its own saves and settings.
 
 Controls: on-foot and vehicle buttons use the same gameplay input as desktop. Move with the left touch stick and drag the right side to look. Menu navigation includes OK and BACK buttons.
 
@@ -131,7 +135,7 @@ Controls: on-foot and vehicle buttons use the same gameplay input as desktop. Mo
 - `-Check` reports prerequisites without downloading or building.
 - `-SetupOnly` prepares tools without compiling the game.
 - `-PackageOnly` reuses the compiled ARM64 library if packaging fails after Rust compilation. After changing Rust code, run the normal command.
-- `-BundleGameData` is for **local testing only**. It packages data from `config/original_gta3_path.txt` (or `-GtaDir <path>`) into `dist/android/re3bevy-arm64-private-with-game-data.apk`. Do not upload or redistribute this private package.
+- `-BundleGameData` is for **local testing only**. It packages data from `config/original_gta3_path.txt` (or `-GtaDir <path>`) into `dist/android/rustgta3-arm64-private-with-game-data.apk`. Do not upload or redistribute this private package.
 
 Building an APK without game data does not resolve the separate code and dependency licensing questions below.
 
@@ -140,7 +144,7 @@ Building an APK without game data does not resolve the separate code and depende
 ## FAQ
 
 **Is there a GTA 3 remake or reimplementation written in Rust?**
-re3bevy is an experimental attempt at one, built on the Bevy game engine. It is a work in progress and the full game is not yet playable.
+RustGta3 is an experimental attempt at one, built on the Bevy game engine. It is a work in progress and the full game is not yet playable.
 
 **Does it include GTA III's game files?**
 No. You need your own lawfully obtained GTA III PC installation. The default Android APK also contains no game data.
@@ -172,7 +176,7 @@ Run `python scripts/check-source-distribution.py` before preparing source for pu
 A new Git repository must contain only the reviewed source snapshot, preserve the notices and omit reference checkouts and private files. After resolving the publication rights, create that snapshot without deleting your working repository or its history:
 
 ```powershell
-python scripts/check-source-distribution.py --export dist/source/re3bevy
+python scripts/check-source-distribution.py --export dist/source/rustgta3
 ```
 
 The destination must be new. The export omits Git metadata and reference checkouts. The export does not initialize a repository or upload anything.
@@ -181,7 +185,7 @@ The destination must be new. The export omits Git metadata and reference checkou
 
 ## License and redistribution
 
-Original game data is not part of the project's licensed source distribution. re3bevy is an independent, unofficial project and is not affiliated with or endorsed by Rockstar Games or Take-Two Interactive.
+Original game data is not part of the project's licensed source distribution. RustGta3 is an independent, unofficial project and is not affiliated with or endorsed by Rockstar Games or Take-Two Interactive.
 
 [LICENSE](LICENSE) applies the MIT license only to original contributions whose copyright holders have authorized that license. Third-party code and reference-derived portions are not automatically relicensed by it. **Redistribution rights for the complete project remain unresolved.** See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source provenance, exclusions and dependency obligations. This is not a fully cleared open-source release or a claim of clean-room development.
 

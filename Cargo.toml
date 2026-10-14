@@ -1,13 +1,13 @@
 
 [workspace]
 members = [
-    "crates/re3bevy",
-    "crates/re3bevy_assets",
-    "crates/re3bevy_core",
-    "crates/re3bevy_debug",
-    "crates/re3bevy_dev_arena",
-    "crates/re3bevy_formats",
-    "crates/re3bevy_game",
+    "crates/rustgta3",
+    "crates/rustgta3_assets",
+    "crates/rustgta3_core",
+    "crates/rustgta3_debug",
+    "crates/rustgta3_dev_arena",
+    "crates/rustgta3_formats",
+    "crates/rustgta3_game",
 ]
 resolver = "3"
 
@@ -47,12 +47,12 @@ bevy = { version = "0.20.0", default-features = false, features = [
 # Upstream Bevy 0.20 support, pinned until a compatible crates.io release.
 bevy_enhanced_input = { git = "https://github.com/simgine/bevy_enhanced_input", rev = "b72891d3b45f43e14ff7eaf71773853003805824" }
 
-re3bevy_assets = { path = "crates/re3bevy_assets" }
-re3bevy_core = { path = "crates/re3bevy_core" }
-re3bevy_debug = { path = "crates/re3bevy_debug" }
-re3bevy_dev_arena = { path = "crates/re3bevy_dev_arena" }
-re3bevy_formats = { path = "crates/re3bevy_formats" }
-re3bevy_game = { path = "crates/re3bevy_game" }
+rustgta3_assets = { path = "crates/rustgta3_assets" }
+rustgta3_core = { path = "crates/rustgta3_core" }
+rustgta3_debug = { path = "crates/rustgta3_debug" }
+rustgta3_dev_arena = { path = "crates/rustgta3_dev_arena" }
+rustgta3_formats = { path = "crates/rustgta3_formats" }
+rustgta3_game = { path = "crates/rustgta3_game" }
 
 rodio = { version = "0.22.2", default-features = false, features = [
     "symphonia-adpcm",
@@ -67,10 +67,10 @@ rodio = { version = "0.22.2", default-features = false, features = [
 #
 # Optimize for fast edit -> compile -> run iteration.
 #
-# re3bevy_game previously had opt-level = 2, which caused extremely expensive
+# rustgta3_game previously had opt-level = 2, which caused extremely expensive
 # LLVM code generation. The timing report showed:
 #
-#   re3bevy_game:
+#   rustgta3_game:
 #     total:    ~122.8s
 #     frontend:  ~17.7s
 #     codegen:  ~105.1s
@@ -113,19 +113,19 @@ debug = false
 #
 # They remain optimized while the main gameplay crate stays at opt-level 0.
 
-[profile.dev.package.re3bevy_formats]
+[profile.dev.package.rustgta3_formats]
 opt-level = 3
 debug = false
 
-[profile.dev.package.re3bevy_assets]
+[profile.dev.package.rustgta3_assets]
 opt-level = 2
 debug = false
 
 # The game/renderer crate owns the per-frame ECS, collision and render hot
-# paths. Leaving it at dev opt-level 0 makes plain `cargo run -p re3bevy`
+# paths. Leaving it at dev opt-level 0 makes plain `cargo run -p rustgta3`
 # execute dramatically more work than the runtime/profiling builds and hides
 # real frame-pacing problems behind debug-code overhead.
-[profile.dev.package.re3bevy_game]
+[profile.dev.package.rustgta3_game]
 opt-level = 2
 debug = false
 
@@ -137,7 +137,7 @@ debug = false
 # Keep the default dev profile focused on fast edit -> compile -> run cycles,
 # while providing an explicit profile for playing and profiling the real game.
 # `opt-level = 2` avoids the worst LLVM cost of a full release build while
-# removing the large runtime penalty of executing re3bevy_game at opt-level 0.
+# removing the large runtime penalty of executing rustgta3_game at opt-level 0.
 # Line tables keep profiler stacks/symbols useful without full debug info.
 
 [profile.runtime]
@@ -162,23 +162,23 @@ debug = "full"
 [profile.profiling.package."*"]
 debug = "line-tables-only"
 
-[profile.profiling.package.re3bevy]
+[profile.profiling.package.rustgta3]
 debug = "full"
 
-[profile.profiling.package.re3bevy_game]
+[profile.profiling.package.rustgta3_game]
 debug = "full"
 
-[profile.profiling.package.re3bevy_core]
+[profile.profiling.package.rustgta3_core]
 debug = "full"
 
-[profile.profiling.package.re3bevy_assets]
+[profile.profiling.package.rustgta3_assets]
 debug = "full"
 
-[profile.profiling.package.re3bevy_formats]
+[profile.profiling.package.rustgta3_formats]
 debug = "full"
 
-[profile.profiling.package.re3bevy_dev_arena]
+[profile.profiling.package.rustgta3_dev_arena]
 debug = "full"
 
-[profile.profiling.package.re3bevy_debug]
+[profile.profiling.package.rustgta3_debug]
 debug = "full"

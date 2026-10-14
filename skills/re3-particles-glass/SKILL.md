@@ -1,6 +1,6 @@
 ---
 name: re3-particles-glass
-description: re3bevy particle cadence, producer stages, admission/capacity and falling-glass lifetime/submission.
+description: RustGta3 particle cadence, producer stages, admission/capacity and falling-glass lifetime/submission.
 ---
 
 ## Creation policy and stages

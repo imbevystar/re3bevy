@@ -1,0 +1,11 @@
+[package]
+name = "rustgta3_debug"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy.workspace = true
+rustgta3_assets.workspace = true
+rustgta3_core.workspace = true
+rustgta3_game.workspace = true

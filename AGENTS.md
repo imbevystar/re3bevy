@@ -1,4 +1,4 @@
-# re3bevy
+# RustGta3
 
 Reproduce GTA III behavior in idiomatic Rust/Bevy ECS. Reference C++ defines
 behavior; Bevy owns live state and lifecycle. Do not translate C++ architecture

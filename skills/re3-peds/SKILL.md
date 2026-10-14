@@ -1,6 +1,6 @@
 ---
 name: re3-peds
-description: re3bevy ped/player component ownership, animation, vitality, locomotion and obstacle relationships.
+description: RustGta3 ped/player component ownership, animation, vitality, locomotion and obstacle relationships.
 ---
 
 ## Shared ped/player state

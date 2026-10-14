@@ -1,4 +1,4 @@
-# Invoked after linking, or manually with -Executable target/debug/re3bevy.exe.
+# Invoked after linking, or manually with -Executable target/debug/rustgta3.exe.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -131,7 +131,7 @@ try {
     $Executable = [IO.Path]::GetFullPath($Executable)
     $artifactName = [IO.Path]::GetFileNameWithoutExtension($Executable)
     # Cargo links hashed executables in deps; test harnesses must not replace games.
-    if ($artifactName -notmatch '^(re3bevy|re3bevynewgame)(?:-[a-f0-9]+)?$') { exit 0 }
+    if ($artifactName -notmatch '^(rustgta3|rustgta3newgame)(?:-[a-f0-9]+)?$') { exit 0 }
     $binaryName = $Matches[1]
     $compilerPath = 'rustc'
     if ($linkArguments.Count -gt 0) {
@@ -164,7 +164,7 @@ try {
     $files = @{}
     $files["$binaryName.exe"] = $Executable
     $gtaRoot = Get-ConfiguredPath 'original_gta3_path.txt'
-    $files['LICENSE.pl_mpeg'] = Join-Path $repoRoot 'crates/re3bevy_formats/native/LICENSE.pl_mpeg'
+    $files['LICENSE.pl_mpeg'] = Join-Path $repoRoot 'crates/rustgta3_formats/native/LICENSE.pl_mpeg'
     $files['LICENSE'] = Join-Path $repoRoot 'LICENSE'
     $files['THIRD_PARTY_NOTICES.md'] = Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md'
     $queue = [Collections.Generic.Queue[string]]::new()
@@ -211,8 +211,8 @@ try {
     }
     # Refresh Cargo's watched-folder list after a distribution is recreated.
     if ($createdMarker) { [IO.File]::SetLastWriteTimeUtc($rootMarker, [DateTime]::UtcNow) }
-    if ($linkArguments.Count -eq 0) { [Console]::Error.WriteLine("re3bevy dist: $destination") }
+    if ($linkArguments.Count -eq 0) { [Console]::Error.WriteLine("rustgta3 dist: $destination") }
 } catch {
-    [Console]::Error.WriteLine("re3bevy dist failed: $_")
+    [Console]::Error.WriteLine("rustgta3 dist failed: $_")
     exit 1
 }
