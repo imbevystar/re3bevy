@@ -1,8 +1,0 @@
-[package]
-name = "rustgta3_core"
-version.workspace = true
-edition.workspace = true
-publish.workspace = true
-
-[dependencies]
-bevy.workspace = true

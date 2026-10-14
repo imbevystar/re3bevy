@@ -1,6 +1,6 @@
 ---
 name: re3-particles-glass
-description: RustGta3 particle cadence, producer stages, admission/capacity and falling-glass lifetime/submission.
+description: rust-gta-3 particle cadence, producer stages, admission/capacity and falling-glass lifetime/submission.
 ---
 
 ## Creation policy and stages

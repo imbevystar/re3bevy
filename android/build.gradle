@@ -2,5 +2,5 @@ plugins {
     id 'com.android.application' version '8.6.1' apply false
 }
 // All generated Android output shares the repository's Cargo cache.
-layout.buildDirectory = file('../target/android')
+layout.buildDirectory = file(providers.gradleProperty('cargoTarget').orElse('../target').get() + '/android')
 subprojects { layout.buildDirectory = rootProject.layout.buildDirectory.dir(project.name) }

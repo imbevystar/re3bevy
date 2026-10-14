@@ -1,6 +1,6 @@
 ---
 name: re3-vehicles
-description: RustGta3 vehicle ownership, entry/control, suspension construction and native presentation.
+description: rust-gta-3 vehicle ownership, entry/control, suspension construction and native presentation.
 ---
 
 ## Component owners

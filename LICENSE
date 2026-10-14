@@ -2,14 +2,14 @@ License scope
 =============
 
 The MIT license below covers only original contributions whose copyright
-holders have authorized licensing them as part of RustGta3. It does not grant
+holders have authorized licensing them as part of rust-gta-3. It does not grant
 rights to Rockstar Games / Take-Two material, reference-derived material of
 unresolved provenance, or separately licensed third-party code. See
 THIRD_PARTY_NOTICES.md for exclusions and the unresolved publication status.
 
 MIT License
 
-Copyright (c) 2026 RustGta3 contributors
+Copyright (c) 2026 rust-gta-3 contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

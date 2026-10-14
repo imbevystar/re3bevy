@@ -1,6 +1,6 @@
 ---
 name: re3-audio
-description: RustGta3 actor audio owners, one-shot sequences, focused-player engine channels and stereo playback.
+description: rust-gta-3 actor audio owners, one-shot sequences, focused-player engine channels and stereo playback.
 ---
 
 ## Actor and shared state

@@ -157,3 +157,17 @@ env/
 .empryo/
 .continue/
 *mcp_seq*.json
+
+# Local reference checkouts and original game data never enter source commits.
+/references/
+/.gitmodules
+*.dff
+*.txd
+*.ifp
+*.gxt
+*.scm
+*.col
+*.img
+*.dir
+*.sdt
+*.raw

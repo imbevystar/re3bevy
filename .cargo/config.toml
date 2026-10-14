@@ -7,6 +7,6 @@ linker = "scripts/dist-linker.cmd"
 [alias]
 c = "check --workspace"
 ca = "check --workspace --all-targets"
-r = "run -p rustgta3"
-rr = "run -p rustgta3 --profile runtime"
+r = "run -p rust-gta-3"
+rr = "run -p rust-gta-3 --profile runtime"
 t = "test --workspace"

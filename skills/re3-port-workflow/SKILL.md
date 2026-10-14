@@ -1,6 +1,6 @@
 ---
 name: re3-port-workflow
-description: RustGta3 source changes, behavior investigation, bounded cleanup and production verification.
+description: rust-gta-3 source changes, behavior investigation, bounded cleanup and production verification.
 ---
 
 ## Project direction

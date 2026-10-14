@@ -4139,74 +4139,74 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustgta3"
+name = "rust-gta-3"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_app",
  "bevy_ecs",
- "rustgta3_assets",
- "rustgta3_core",
- "rustgta3_dev_arena",
- "rustgta3_game",
+ "rust_gta_3_assets",
+ "rust_gta_3_core",
+ "rust_gta_3_dev_arena",
+ "rust_gta_3_game",
  "serde_json",
  "tracy-client-sys",
 ]
 
 [[package]]
-name = "rustgta3_assets"
+name = "rust_gta_3_assets"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "rustgta3_core",
- "rustgta3_formats",
+ "rust_gta_3_core",
+ "rust_gta_3_formats",
 ]
 
 [[package]]
-name = "rustgta3_core"
+name = "rust_gta_3_core"
 version = "0.1.0"
 dependencies = [
  "bevy",
 ]
 
 [[package]]
-name = "rustgta3_debug"
+name = "rust_gta_3_debug"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "rustgta3_assets",
- "rustgta3_core",
- "rustgta3_game",
+ "rust_gta_3_assets",
+ "rust_gta_3_core",
+ "rust_gta_3_game",
 ]
 
 [[package]]
-name = "rustgta3_dev_arena"
+name = "rust_gta_3_dev_arena"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "rustgta3_assets",
- "rustgta3_core",
- "rustgta3_game",
+ "rust_gta_3_assets",
+ "rust_gta_3_core",
+ "rust_gta_3_game",
 ]
 
 [[package]]
-name = "rustgta3_formats"
+name = "rust_gta_3_formats"
 version = "0.1.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
-name = "rustgta3_game"
+name = "rust_gta_3_game"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_enhanced_input",
  "bytemuck",
  "naga",
- "rustgta3_assets",
- "rustgta3_core",
- "rustgta3_formats",
+ "rust_gta_3_assets",
+ "rust_gta_3_core",
+ "rust_gta_3_formats",
  "rodio",
 ]
 

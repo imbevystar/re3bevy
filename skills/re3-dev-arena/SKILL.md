@@ -1,6 +1,6 @@
 ---
 name: re3-dev-arena
-description: RustGta3 isolated developer arena and co-op actor fixtures, construction, stage access, presentation and collision.
+description: rust-gta-3 isolated developer arena and co-op actor fixtures, construction, stage access, presentation and collision.
 ---
 
 # Arena ownership

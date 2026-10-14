@@ -6,7 +6,7 @@ import android.view.WindowManager;
 import com.google.androidgamesdk.GameActivity;
 
 public final class MainActivity extends GameActivity {
-    static { System.loadLibrary("rustgta3"); }
+    static { System.loadLibrary("rust_gta_3"); }
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);

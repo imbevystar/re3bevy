@@ -19,7 +19,7 @@ import sys
 
 REQUIRED = (
     "LICENSE", "THIRD_PARTY_NOTICES.md",
-    "crates/rustgta3_formats/native/LICENSE.pl_mpeg",
+    "crates/rust_gta_3_formats/native/LICENSE.pl_mpeg",
 )
 LOCAL_ROOTS = {
     ".git", ".local-git-remote", "target", "dist", "game-data",

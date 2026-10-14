@@ -19,6 +19,9 @@ foreach ($name in @('ANDROID_HOME','ANDROID_SDK_ROOT','ANDROID_NDK_HOME','JAVA_H
 $temporary = $null
 Push-Location $repository
 try {
+    $metadataJson = & cargo metadata --no-deps --format-version 1
+    if ($LASTEXITCODE) { throw 'Cannot locate the Cargo workspace output directory.' }
+    $targetRoot = ($metadataJson | ConvertFrom-Json).target_directory
     if ($GtaDir -and !$BundleGameData) {
         throw '-GtaDir requires -BundleGameData for a private APK. The default APK imports user-provided data on the phone.'
     }
@@ -67,7 +70,7 @@ try {
     if (!$env:JAVA_HOME -or !(Test-Path -LiteralPath "$env:JAVA_HOME/bin/java.exe")) { throw 'Install JDK 17 or 21, or set JAVA_HOME to Android Studio/jbr.' }
     $javaProperties = & "$env:JAVA_HOME/bin/java.exe" -XshowSettings:properties -version 2>&1 | Out-String
     if ($javaProperties -notmatch 'java\.specification\.version\s*=\s*(17|21)\b') { throw 'This Android build uses JDK 17 or 21.' }
-    $gradleCache = Join-Path $env:USERPROFILE ".gradle/rustgta3/gradle-$gradleVersion"
+    $gradleCache = Join-Path $env:USERPROFILE ".gradle/rust-gta-3/gradle-$gradleVersion"
     $gradle = Join-Path $gradleCache 'bin/gradle.bat'
     if ($Check) {
         foreach ($path in @('platforms/android-35/android.jar','build-tools/35.0.0/aapt2.exe',"ndk/$ndkVersion/source.properties")) {
@@ -102,7 +105,7 @@ try {
     }
 
     if (!(Test-Path -LiteralPath $gradle)) {
-        $temporary = Join-Path ([IO.Path]::GetTempPath()) ('rustgta3-android-' + [Guid]::NewGuid().ToString('N'))
+        $temporary = Join-Path ([IO.Path]::GetTempPath()) ('rust-gta-3-android-' + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $temporary | Out-Null
         $zip = Join-Path $temporary 'gradle.zip'
         $url = "https://services.gradle.org/distributions/gradle-$gradleVersion-bin.zip"
@@ -115,11 +118,11 @@ try {
     }
     if ($SetupOnly) { Write-Host 'Android toolchain ready. No game compilation was started.'; return }
     if (!$temporary) {
-        $temporary = Join-Path ([IO.Path]::GetTempPath()) ('rustgta3-android-' + [Guid]::NewGuid().ToString('N'))
+        $temporary = Join-Path ([IO.Path]::GetTempPath()) ('rust-gta-3-android-' + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $temporary | Out-Null
     }
     $nativeLibs = Join-Path $temporary 'jniLibs'
-    $compiledLibrary = Join-Path $repository 'target/aarch64-linux-android/release/librustgta3.so'
+    $compiledLibrary = Join-Path $targetRoot 'aarch64-linux-android/release/librust_gta_3.so'
     if ($PackageOnly) {
         if (!(Test-Path -LiteralPath $compiledLibrary -PathType Leaf)) { throw 'No compiled ARM64 library found. Run without -PackageOnly first.' }
         Write-Host 'Packaging the existing ARM64 build; Rust compilation skipped.'
@@ -127,10 +130,10 @@ try {
         # Keep Cargo output in its default cache; align for 16 KB Android devices.
         $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS = '-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384'
         # Request the shared library only for Android, preserving desktop builds.
-        & cargo ndk -t arm64-v8a -P 26 rustc -p rustgta3 --lib --crate-type cdylib --release --locked
+        & cargo ndk -t arm64-v8a -P 26 rustc -p rust-gta-3 --lib --crate-type cdylib --release --locked
         if ($LASTEXITCODE) { throw 'Android Rust build failed.' }
     }
-    $nativeLibrary = Join-Path $nativeLibs 'arm64-v8a/librustgta3.so'
+    $nativeLibrary = Join-Path $nativeLibs 'arm64-v8a/librust_gta_3.so'
     New-Item -ItemType Directory -Path (Split-Path $nativeLibrary) -Force | Out-Null
     Copy-Item -LiteralPath $compiledLibrary -Destination $nativeLibrary
     & (Join-Path $env:ANDROID_NDK_HOME 'toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe') --strip-unneeded $nativeLibrary
@@ -155,11 +158,11 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $repository 'LICENSE') -Destination (Join-Path $assetRoot 'LICENSE')
     Copy-Item -LiteralPath (Join-Path $repository 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $assetRoot 'THIRD_PARTY_NOTICES.md')
-    Copy-Item -LiteralPath (Join-Path $repository 'crates/rustgta3_formats/native/LICENSE.pl_mpeg') -Destination (Join-Path $assetRoot 'LICENSE.pl_mpeg')
+    Copy-Item -LiteralPath (Join-Path $repository 'crates/rust_gta_3_formats/native/LICENSE.pl_mpeg') -Destination (Join-Path $assetRoot 'LICENSE.pl_mpeg')
     $privateData = $BundleGameData.IsPresent.ToString().ToLowerInvariant()
-    & $gradle -p (Join-Path $repository 'android') --project-cache-dir (Join-Path $repository 'target/android/.gradle') --no-daemon "-PgameAssets=$assetRoot" "-PnativeLibs=$nativeLibs" "-PprivateGameData=$privateData" :app:assembleDebug
+    & $gradle -p (Join-Path $repository 'android') --project-cache-dir (Join-Path $targetRoot 'android/.gradle') --no-daemon "-PcargoTarget=$targetRoot" "-PgameAssets=$assetRoot" "-PnativeLibs=$nativeLibs" "-PprivateGameData=$privateData" :app:assembleDebug
     if ($LASTEXITCODE) { throw 'APK packaging failed.' }
-    $apk = Join-Path $repository 'target/android/app/outputs/apk/debug/app-debug.apk'
+    $apk = Join-Path $targetRoot 'android/app/outputs/apk/debug/app-debug.apk'
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $package = [IO.Compression.ZipFile]::OpenRead($apk)
     try {
@@ -174,21 +177,21 @@ try {
     $distribution = Join-Path $repository 'dist/android'
     New-Item -ItemType Directory -Path $distribution -Force | Out-Null
     # Preserve legacy builds whose generic filename hid bundled game data.
-    $defaultApk = Join-Path $distribution 'rustgta3-arm64.apk'
+    $defaultApk = Join-Path $distribution 'rust-gta-3-arm64.apk'
     if (!$BundleGameData -and (Test-Path -LiteralPath $defaultApk -PathType Leaf)) {
         $legacy = [IO.Compression.ZipFile]::OpenRead($defaultApk)
         try { $hasGameData = @($legacy.Entries | Where-Object { $_.FullName.StartsWith('assets/gta3/') }).Count -gt 0 }
         finally { $legacy.Dispose() }
         if ($hasGameData) {
-            $privateApk = Join-Path $distribution 'rustgta3-arm64-private-with-game-data.apk'
+            $privateApk = Join-Path $distribution 'rust-gta-3-arm64-private-with-game-data.apk'
             if (Test-Path -LiteralPath $privateApk) {
-                $privateApk = Join-Path $distribution ('rustgta3-arm64-private-with-game-data-' + [Guid]::NewGuid().ToString('N') + '.apk')
+                $privateApk = Join-Path $distribution ('rust-gta-3-arm64-private-with-game-data-' + [Guid]::NewGuid().ToString('N') + '.apk')
             }
             Move-Item -LiteralPath $defaultApk -Destination $privateApk
             Write-Host "Preserved previous private APK: $privateApk"
         }
     }
-    $apkName = if ($BundleGameData) { 'rustgta3-arm64-private-with-game-data.apk' } else { 'rustgta3-arm64.apk' }
+    $apkName = if ($BundleGameData) { 'rust-gta-3-arm64-private-with-game-data.apk' } else { 'rust-gta-3-arm64.apk' }
     Move-Item -LiteralPath $apk -Destination (Join-Path $distribution $apkName) -Force
     Write-Host "APK ready: $distribution/$apkName"
 } finally {
@@ -197,7 +200,7 @@ try {
     if ($temporary -and (Test-Path -LiteralPath $temporary)) {
         $resolved = [IO.Path]::GetFullPath($temporary)
         $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
-        if (!$resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or !(Split-Path $resolved -Leaf).StartsWith('rustgta3-android-')) { throw 'Unsafe Android temporary cleanup path.' }
+        if (!$resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or !(Split-Path $resolved -Leaf).StartsWith('rust-gta-3-android-')) { throw 'Unsafe Android temporary cleanup path.' }
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }

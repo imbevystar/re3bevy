@@ -1,15 +1,57 @@
+[package]
+name = "rust-gta-3"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+default-run = "rust-gta-3"
+
+[features]
+# Bevy's built-in ECS/render tracing plus rust-gta-3's deeper hot-path spans.
+# Tracy is opt-in so normal gameplay carries no profiling collection overhead.
+profiling = [
+    "bevy/trace_tracy",
+    "bevy/debug",
+    "rust_gta_3_game/profiling",
+    "dep:tracy-client-sys",
+]
+profiling-memory = [
+    "bevy/trace_tracy_memory",
+    "bevy/debug",
+    "rust_gta_3_game/profiling",
+    "dep:tracy-client-sys",
+]
+profiling-chrome = ["bevy/trace_chrome", "bevy/debug", "rust_gta_3_game/profiling"]
+profiling-toggle = [
+    "dep:bevy_app",
+    "bevy_app/trace",
+    "dep:bevy_ecs",
+    "bevy_ecs/debug",
+    "bevy_ecs/trace",
+    "rust_gta_3_game/profile-capture",
+    "dep:serde_json",
+]
+
+[dependencies]
+bevy.workspace = true
+bevy_app = { version = "0.20.0", optional = true, default-features = false }
+bevy_ecs = { version = "0.20.0", optional = true, default-features = false }
+rust_gta_3_assets.workspace = true
+rust_gta_3_core.workspace = true
+rust_gta_3_dev_arena.workspace = true
+rust_gta_3_game.workspace = true
+tracy-client-sys = { version = "=0.30.0", optional = true, default-features = false }
+serde_json = { version = "1.0", optional = true }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+bevy = { workspace = true, features = ["dynamic_linking", "bevy_gilrs"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+bevy = { workspace = true, features = ["android-game-activity"] }
+
 
 [workspace]
-members = [
-    "crates/rustgta3",
-    "crates/rustgta3_assets",
-    "crates/rustgta3_core",
-    "crates/rustgta3_debug",
-    "crates/rustgta3_dev_arena",
-    "crates/rustgta3_formats",
-    "crates/rustgta3_game",
-]
-resolver = "3"
+members = ["crates/*"]
+resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
@@ -47,12 +89,12 @@ bevy = { version = "0.20.0", default-features = false, features = [
 # Upstream Bevy 0.20 support, pinned until a compatible crates.io release.
 bevy_enhanced_input = { git = "https://github.com/simgine/bevy_enhanced_input", rev = "b72891d3b45f43e14ff7eaf71773853003805824" }
 
-rustgta3_assets = { path = "crates/rustgta3_assets" }
-rustgta3_core = { path = "crates/rustgta3_core" }
-rustgta3_debug = { path = "crates/rustgta3_debug" }
-rustgta3_dev_arena = { path = "crates/rustgta3_dev_arena" }
-rustgta3_formats = { path = "crates/rustgta3_formats" }
-rustgta3_game = { path = "crates/rustgta3_game" }
+rust_gta_3_assets = { path = "crates/rust_gta_3_assets" }
+rust_gta_3_core = { path = "crates/rust_gta_3_core" }
+rust_gta_3_debug = { path = "crates/rust_gta_3_debug" }
+rust_gta_3_dev_arena = { path = "crates/rust_gta_3_dev_arena" }
+rust_gta_3_formats = { path = "crates/rust_gta_3_formats" }
+rust_gta_3_game = { path = "crates/rust_gta_3_game" }
 
 rodio = { version = "0.22.2", default-features = false, features = [
     "symphonia-adpcm",
@@ -67,10 +109,10 @@ rodio = { version = "0.22.2", default-features = false, features = [
 #
 # Optimize for fast edit -> compile -> run iteration.
 #
-# rustgta3_game previously had opt-level = 2, which caused extremely expensive
+# rust_gta_3_game previously had opt-level = 2, which caused extremely expensive
 # LLVM code generation. The timing report showed:
 #
-#   rustgta3_game:
+#   rust_gta_3_game:
 #     total:    ~122.8s
 #     frontend:  ~17.7s
 #     codegen:  ~105.1s
@@ -113,19 +155,19 @@ debug = false
 #
 # They remain optimized while the main gameplay crate stays at opt-level 0.
 
-[profile.dev.package.rustgta3_formats]
+[profile.dev.package.rust_gta_3_formats]
 opt-level = 3
 debug = false
 
-[profile.dev.package.rustgta3_assets]
+[profile.dev.package.rust_gta_3_assets]
 opt-level = 2
 debug = false
 
 # The game/renderer crate owns the per-frame ECS, collision and render hot
-# paths. Leaving it at dev opt-level 0 makes plain `cargo run -p rustgta3`
+# paths. Leaving it at dev opt-level 0 makes plain `cargo run -p rust-gta-3`
 # execute dramatically more work than the runtime/profiling builds and hides
 # real frame-pacing problems behind debug-code overhead.
-[profile.dev.package.rustgta3_game]
+[profile.dev.package.rust_gta_3_game]
 opt-level = 2
 debug = false
 
@@ -137,7 +179,7 @@ debug = false
 # Keep the default dev profile focused on fast edit -> compile -> run cycles,
 # while providing an explicit profile for playing and profiling the real game.
 # `opt-level = 2` avoids the worst LLVM cost of a full release build while
-# removing the large runtime penalty of executing rustgta3_game at opt-level 0.
+# removing the large runtime penalty of executing rust_gta_3_game at opt-level 0.
 # Line tables keep profiler stacks/symbols useful without full debug info.
 
 [profile.runtime]
@@ -162,23 +204,23 @@ debug = "full"
 [profile.profiling.package."*"]
 debug = "line-tables-only"
 
-[profile.profiling.package.rustgta3]
+[profile.profiling.package.rust-gta-3]
 debug = "full"
 
-[profile.profiling.package.rustgta3_game]
+[profile.profiling.package.rust_gta_3_game]
 debug = "full"
 
-[profile.profiling.package.rustgta3_core]
+[profile.profiling.package.rust_gta_3_core]
 debug = "full"
 
-[profile.profiling.package.rustgta3_assets]
+[profile.profiling.package.rust_gta_3_assets]
 debug = "full"
 
-[profile.profiling.package.rustgta3_formats]
+[profile.profiling.package.rust_gta_3_formats]
 debug = "full"
 
-[profile.profiling.package.rustgta3_dev_arena]
+[profile.profiling.package.rust_gta_3_dev_arena]
 debug = "full"
 
-[profile.profiling.package.rustgta3_debug]
+[profile.profiling.package.rust_gta_3_debug]
 debug = "full"

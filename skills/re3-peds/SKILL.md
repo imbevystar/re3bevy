@@ -1,6 +1,6 @@
 ---
 name: re3-peds
-description: RustGta3 ped/player component ownership, animation, vitality, locomotion and obstacle relationships.
+description: rust-gta-3 ped/player component ownership, animation, vitality, locomotion and obstacle relationships.
 ---
 
 ## Shared ped/player state

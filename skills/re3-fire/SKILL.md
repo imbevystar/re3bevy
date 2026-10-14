@@ -1,6 +1,6 @@
 ---
 name: re3-fire
-description: RustGta3 native fire manager slots, SCM attachments, flamethrower damage and actor fire lifecycle/origins.
+description: rust-gta-3 native fire manager slots, SCM attachments, flamethrower damage and actor fire lifecycle/origins.
 ---
 
 # Fire ownership and lifecycle
