@@ -2,8 +2,8 @@
 //! Native corner classification and directional hysteresis, without a second route cache.
 //! TODO(parity): CPed::SetDirectionToWalkAroundObject non-vehicle pole geometry
 //! and native corner probes against live movable CObjects.
-//! TODO(parity): CPed::SetDirectionToWalkAroundObject car-entry door/van branches
-//! and player move-speed timer; CPed::ProcessControl collision-trigger ordering.
+//! Vehicle entry retains the selected side and rear-van approach. The caller
+//! supplies player move speed without duplicating its component ownership.
 use super::*;
 use crate::peds::PedLocomotion::PedLocomotion;
 use rustgta3_core::core::Coordinates::CVector2D;
@@ -38,6 +38,7 @@ struct Corners {
     bottom_right: Occupancy,
 }
 
+#[cfg(test)]
 pub(super) fn native_vehicle_corner(
     ped: &mut CPed,
     locomotion: &mut PedLocomotion,
@@ -50,6 +51,25 @@ pub(super) fn native_vehicle_corner(
     loader: &CFileLoader,
     now: u32,
     general: &mut CGeneral,
+) -> Option<CVector> {
+    native_vehicle_corner_for_entry(ped, locomotion, avoidance, start, blocker,
+        entity, previous_obstacle, colliders, loader, now, general, None, None)
+}
+
+pub(super) fn native_vehicle_corner_for_entry(
+    ped: &mut CPed,
+    locomotion: &mut PedLocomotion,
+    avoidance: &mut crate::peds::PedObstacle::PedObstacleAvoidance,
+    start: CVector,
+    blocker: &PedVehicleCollider,
+    entity: Entity,
+    previous_obstacle: Option<Entity>,
+    colliders: &[PedVehicleCollider],
+    loader: &CFileLoader,
+    now: u32,
+    general: &mut CGeneral,
+    entry: Option<(i32, bool)>,
+    player_move_speed: Option<f32>,
 ) -> Option<CVector> {
     if matches!(
         ped.move_state,
@@ -81,6 +101,10 @@ pub(super) fn native_vehicle_corner(
     let old_rotation_dest = locomotion.rotation_dest;
     let turn = CGeneral::limit_radian_angle(old_rotation_dest - center_heading);
     let upside_down = blocker.matrix.up.z < 0.0;
+    let mut corners = Corners {
+        top_left: Occupancy::Clear, top_right: Occupancy::Clear,
+        bottom_left: Occupancy::Clear, bottom_right: Occupancy::Clear,
+    };
     if now > avoidance.colliding_thing_timer || previous_obstacle != Some(entity) {
         let interval = ((blocker.max.y - blocker.min.y) * 0.1)
             .max(0.5)
@@ -113,7 +137,7 @@ pub(super) fn native_vehicle_corner(
                 Occupancy::Clear
             }
         };
-        let corners = if upside_down {
+        corners = if upside_down {
             Corners {
                 top_left: Occupancy::Clear,
                 top_right: Occupancy::Clear,
@@ -128,7 +152,12 @@ pub(super) fn native_vehicle_corner(
                 bottom_right: probe(max.x - inset, min.y + inset),
             }
         };
-        avoidance.walk_around_type = if upside_down
+        let entering_same_side = entry.is_some_and(|(door, _)| match region {
+            Region::Right => matches!(door, 3 | 5),
+            Region::Left => matches!(door, 2 | 4),
+            _ => false,
+        });
+        avoidance.walk_around_type = if upside_down || entering_same_side
             || [
                 corners.top_left,
                 corners.top_right,
@@ -140,43 +169,17 @@ pub(super) fn native_vehicle_corner(
         {
             0
         } else {
-            classify_turn(region, turn, corners, avoidance.walk_around_type)
+            let entry_turn = if entry.is_some_and(|(door, _)| matches!(door, 2 | 4)) {
+                match region { Region::Behind => turn.max(f32::EPSILON), Region::Front => turn.min(-f32::EPSILON), _ => turn }
+            } else { turn };
+            classify_turn(region, entry_turn, corners, avoidance.walk_around_type)
         };
     }
     avoidance.colliding_thing_timer = now
         .wrapping_add(512)
         .wrapping_add(u32::from(general.get_random_number()));
     let kind = avoidance.walk_around_type;
-    let (x, y) = match region {
-        Region::Behind => {
-            if kind != 1 && kind != 4 && (kind != 0 || turn <= 0.0) {
-                (max.x, min.y)
-            } else {
-                (min.x, min.y)
-            }
-        }
-        Region::Right => {
-            if kind == 4 || kind == 3 || kind == 0 && turn > 0.0 {
-                (max.x, min.y)
-            } else {
-                (max.x, max.y)
-            }
-        }
-        Region::Left => {
-            if kind == 1 || kind == 2 || kind == 0 && turn > 0.0 {
-                (min.x, max.y)
-            } else {
-                (min.x, min.y)
-            }
-        }
-        Region::Front => {
-            if kind == 2 || kind == 3 || kind == 0 && turn > 0.0 {
-                (max.x, max.y)
-            } else {
-                (min.x, max.y)
-            }
-        }
-    };
+    let (x, y) = local_vehicle_corner(region, kind, turn, entry, corners, min, max)?;
     let mut corner =
         blocker
             .matrix
@@ -192,17 +195,67 @@ pub(super) fn native_vehicle_corner(
         locomotion.rotation_dest =
             CGeneral::limit_radian_angle(std::f32::consts::PI + object_heading);
     }
-    let interval = match ped.move_state {
+    let interval = if let Some(speed) = player_move_speed {
+        if entry.is_some() || speed <= 0.0 { 0.0 } else { 2.0 / speed }
+    } else { match ped.move_state {
         eMoveState::PEDMOVE_WALK => 2.0,
         eMoveState::PEDMOVE_RUN | eMoveState::PEDMOVE_SPRINT => 0.5,
         _ => 0.0,
-    };
+    }};
     let distance = (corner.x - start.x)
         .hypot(corner.y - start.y)
         .clamp(0.5, 8.0);
     // Native adds current time in float precision before assigning the u32.
     ped.ped_state_timer = (now as f32 + 280.0 * distance * interval) as u32;
     Some(corner)
+}
+
+fn local_vehicle_corner(
+    region: Region, kind: i32, turn: f32, entry: Option<(i32, bool)>,
+    corners: Corners, min: CVector, max: CVector,
+) -> Option<(f32, f32)> {
+    Some(match region {
+        Region::Behind => {
+            if entry.is_some_and(|(door, van)| van && matches!(door, 4 | 5)) { return None; }
+            if entry.map_or(kind != 1 && kind != 4 && (kind != 0 || turn <= 0.0),
+                |(door, _)| !matches!(door, 2 | 4) && (!corners.bottom_right.blocked() || corners.bottom_left.blocked())) {
+                (max.x, min.y)
+            } else {
+                (min.x, min.y)
+            }
+        }
+        Region::Right => {
+            if entry.is_some_and(|(door, van)| door == 3 || door == 5 && !van) { return None; }
+            if entry.is_some_and(|(door, van)| van && matches!(door, 4 | 5)) {
+                (max.x, min.y)
+            } else
+            if kind == 4 || kind == 3 || kind == 0 && turn > 0.0 {
+                (max.x, min.y)
+            } else {
+                (max.x, max.y)
+            }
+        }
+        Region::Left => {
+            if entry.is_some_and(|(door, van)| door == 2 || door == 4 && !van) { return None; }
+            if entry.is_some_and(|(door, van)| van && matches!(door, 4 | 5)) {
+                (min.x, min.y)
+            } else
+            if kind == 1 || kind == 2 || kind == 0 && turn > 0.0 {
+                (min.x, max.y)
+            } else {
+                (min.x, min.y)
+            }
+        }
+        Region::Front => {
+            let entering_side = entry.filter(|(door, van)| !*van || !matches!(door, 4 | 5));
+            if entering_side.map_or(kind == 2 || kind == 3 || kind == 0 && turn > 0.0,
+                |(door, _)| !matches!(door, 2 | 4) && (!corners.top_right.blocked() || corners.top_left.blocked())) {
+                (max.x, max.y)
+            } else {
+                (min.x, max.y)
+            }
+        }
+    })
 }
 
 fn classify_turn(region: Region, turn: f32, c: Corners, previous: i32) -> i32 {
@@ -277,6 +330,55 @@ mod tests {
             bottom_left: Occupancy::Clear,
             bottom_right: Occupancy::Clear,
         }
+    }
+
+    #[test]
+    fn entry_from_front_or_back_retains_the_selected_door_side() {
+        let min = CVector::new(-1.35, -2.35, 0.0);
+        let max = CVector::new(1.35, 2.35, 0.0);
+        for door in 2..=5 {
+            let x = if matches!(door, 2 | 4) { min.x } else { max.x };
+            for turn in [-2.0, 0.0, 2.0] {
+                assert_eq!(local_vehicle_corner(Region::Behind, 4, turn, Some((door, false)), clear_corners(), min, max), Some((x, min.y)));
+                assert_eq!(local_vehicle_corner(Region::Front, 1, turn, Some((door, false)), clear_corners(), min, max), Some((x, max.y)));
+            }
+        }
+    }
+
+    #[test]
+    fn entry_on_the_correct_side_approaches_the_door_without_an_extra_corner() {
+        let min = CVector::new(-1.35, -2.35, 0.0);
+        let max = CVector::new(1.35, 2.35, 0.0);
+        for door in [2, 4] {
+            assert_eq!(local_vehicle_corner(Region::Left, 0, 0.0, Some((door, false)), clear_corners(), min, max), None);
+            assert!(local_vehicle_corner(Region::Right, 0, 0.0, Some((door, false)), clear_corners(), min, max).is_some());
+        }
+        for door in [3, 5] {
+            assert_eq!(local_vehicle_corner(Region::Right, 0, 0.0, Some((door, false)), clear_corners(), min, max), None);
+            assert!(local_vehicle_corner(Region::Left, 0, 0.0, Some((door, false)), clear_corners(), min, max).is_some());
+        }
+    }
+
+    #[test]
+    fn rear_van_entry_uses_the_rear_instead_of_a_side_door_route() {
+        let min = CVector::new(-1.35, -2.35, 0.0);
+        let max = CVector::new(1.35, 2.35, 0.0);
+        for door in [4, 5] {
+            assert_eq!(local_vehicle_corner(Region::Behind, 0, 0.0, Some((door, true)), clear_corners(), min, max), None);
+            assert_eq!(local_vehicle_corner(Region::Left, 0, 0.0, Some((door, true)), clear_corners(), min, max), Some((min.x, min.y)));
+            assert_eq!(local_vehicle_corner(Region::Right, 0, 0.0, Some((door, true)), clear_corners(), min, max), Some((max.x, min.y)));
+        }
+    }
+
+    #[test]
+    fn right_door_entry_avoids_a_blocked_right_corner_when_left_is_clear() {
+        let min = CVector::new(-1.35, -2.35, 0.0);
+        let max = CVector::new(1.35, 2.35, 0.0);
+        let mut corners = clear_corners();
+        corners.bottom_right = Occupancy::Building;
+        corners.top_right = Occupancy::Vehicle;
+        assert_eq!(local_vehicle_corner(Region::Behind, 0, 0.0, Some((3, false)), corners, min, max), Some((min.x, min.y)));
+        assert_eq!(local_vehicle_corner(Region::Front, 0, 0.0, Some((3, false)), corners, min, max), Some((min.x, max.y)));
     }
 
     #[test]

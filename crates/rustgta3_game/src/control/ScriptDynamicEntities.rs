@@ -283,6 +283,51 @@ use crate::peds::PlayerRead::CWorldPlayersRead;
 #[allow(unused_imports)]
 use std::collections::{HashMap, HashSet};
 
+/// GET_PLAYER_CHAR returns a ped-pool handle; SET_CHAR_RUNNING must resolve
+/// that handle through either live actor owner without confusing it with a
+/// player-array index.
+fn set_script_char_running(
+    entities: &mut ScriptEntityWorld,
+    players: &mut CWorldPlayers,
+    handle: i32,
+    enabled: bool,
+) -> bool {
+    if let Some(entity) = entities.ped_get_mut(handle) {
+        entity.ped.flags.is_running = enabled;
+        true
+    } else if let Some(player) = players.find_by_pool_handle_mut(handle) {
+        player.ped.flags.is_running = enabled;
+        true
+    } else { false }
+}
+
+#[cfg(test)]
+mod running_actor_tests {
+    use super::*;
+
+    #[test]
+    fn running_opcode_resolves_the_player_char_handle_and_can_clear_running() {
+        use bevy::ecs::system::SystemState;
+        use crate::peds::PlayerPed::CWorldPlayerState;
+        let mut world = World::new();
+        world.init_resource::<crate::control::ScriptEntities::ScriptEntityIndex>();
+        let mut player = CPlayerPed::new(&mut CGeneral::with_seed(1), None);
+        player.state.pool_handle = 569;
+        let entity = world.spawn((PedEntity, player.into_bundle())).id();
+        world.insert_resource(CWorldPlayerState { entities: [Some(entity), None], ..default() });
+        let mut state = SystemState::<(ScriptEntityWorld, CWorldPlayers)>::new(&mut world);
+        {
+            let (mut actors, mut players) = state.get_mut(&mut world).unwrap();
+            assert!(set_script_char_running(&mut actors, &mut players, 569, true));
+            assert!(players.player(0).unwrap().ped.flags.is_running);
+            assert!(set_script_char_running(&mut actors, &mut players, 569, false));
+            assert!(!players.player(0).unwrap().ped.flags.is_running);
+            assert!(!set_script_char_running(&mut actors, &mut players, 570, true));
+        }
+        state.apply(&mut world);
+    }
+}
+
 pub(crate) fn apply_script_dynamic_entity_effects(
     mut scripts: ResMut<CTheScripts>,
     mut script_entities: ScriptEntityWorld,
@@ -1883,9 +1928,7 @@ pub(crate) fn apply_script_dynamic_entity_effects(
                 }
             }
             ScriptCommandEffect::SetCharRunning { handle, enabled } => {
-                if let Some(entity) = script_entities.peds.get_mut(&script_entities.index, &handle) {
-                    entity.ped.flags.is_running = enabled;
-                } else {
+                if !set_script_char_running(&mut script_entities, &mut world_players, handle, enabled) {
                     leftover.push(ScriptCommandEffect::SetCharRunning { handle, enabled });
                 }
             }

@@ -133,6 +133,79 @@ where
     Some(car.vehicle.core.physical.entity.transform_point(local))
 }
 
+/// CAutomobile::IsRoomForPedToLeaveCar. The entry point must have lateral
+/// clearance, headroom and an actual floor; a nearby door behind a wall isn't
+/// an available alternative. Borrow authored COL and live actors throughout.
+pub(crate) fn automobile_door_has_room(
+    loader: &CFileLoader,
+    actors: &crate::control::ScriptEntities::ScriptEntityWorld,
+    vehicle_handle: i32,
+    core: &VehicleCore,
+    door: usize,
+    mut door_position: CVector,
+    drag_offset: Option<CVector>,
+) -> Option<bool> {
+    use crate::collision::ColModel::{CColLine, CColPoint, CColVector};
+    let ModelInfoSlot::Vehicle(model) = loader.model_info.get_model_info(core.physical.entity.model_index.max(0) as usize)? else { return None; };
+    let mut seat = vehicle_dummy_model_position(model.clump.base.clump_summary.as_ref()?,
+        if matches!(door, 4 | 5) { "ped_backseat" } else { "ped_frontseat" })?;
+    if matches!(door, 2 | 4) { seat.x = -seat.x; }
+    let matrix = &core.physical.entity.matrix;
+    let mut seat = matrix.transform_point(seat);
+    if let Some(mut offset) = drag_offset {
+        if matches!(door, 3 | 5) { offset.x = -offset.x; }
+        door_position += matrix.multiply3x3(offset);
+    }
+    if matrix.up.z < 0.0 { seat.z += 0.5; door_position.z += 0.5; }
+    let delta = door_position - seat;
+    let length = delta.magnitude();
+    if length <= f32::EPSILON { return Some(false); }
+    let outside = seat + delta * ((length + 0.6) / length);
+    let object_line_hit = |from: CVector, to: CVector| {
+        actors.objects.values().filter_map(|object| {
+            let physical = &object.object.physical;
+            if !physical.entity.flags.uses_collision { return None; }
+            let col = loader.collision_model(physical.entity.model_index.max(0) as usize)?;
+            let local = |point| { let point = physical.entity.matrix.multiply_inverse_point(point); CColVector::new(point.x, point.y, point.z) };
+            let mut point = CColPoint::new();
+            let mut distance = 1.0;
+            col.process_line_of_sight_primitives(&CColLine::new(local(from), local(to)), &mut point, &mut distance)
+                .then(|| physical.entity.matrix.transform_point(CVector::new(point.point.x, point.point.y, point.point.z)).z)
+        }).min_by(|a, b| (a - from.z).abs().total_cmp(&(b - from.z).abs()))
+    };
+    if loader.world.process_line_of_sight_static_hit([seat.x, seat.y, seat.z],
+        [outside.x, outside.y, outside.z], &loader.model_info, None, false).is_some()
+        || object_line_hit(seat, outside).is_some() { return Some(false); }
+    door_position.z += 0.5;
+    if loader.world.sphere_contact_buildings_only([door_position.x, door_position.y, door_position.z], 0.6, &loader.model_info).is_some() {
+        return Some(false);
+    }
+    let sphere_hit = |physical: &crate::entities::Physical::CPhysical| {
+        physical.entity.flags.uses_collision && loader.collision_model(physical.entity.model_index.max(0) as usize)
+            .is_some_and(|col| {
+                let center = physical.entity.matrix.transform_point(CVector::new(
+                    col.bounding_sphere.center.x, col.bounding_sphere.center.y, col.bounding_sphere.center.z));
+                (door_position - center).magnitude_sqr() <= (col.bounding_sphere.radius + 0.6).powi(2)
+                    && crate::peds::PlayerPed::sphere_hits_col_model(door_position, 0.6, &physical.entity.matrix, col)
+            })
+    };
+    if actors.vehicles.iter().any(|(handle, car)| *handle != vehicle_handle && sphere_hit(&car.base().physical))
+        || actors.objects.values().any(|object| sphere_hit(&object.object.physical)) { return Some(false); }
+    let vertical_hit = |end_z: f32| {
+        let building = loader.world.process_vertical_line_buildings_only_with_entity(
+            [door_position.x, door_position.y, door_position.z], end_z, &loader.model_info).map(|(point, _)| point.point.z);
+        let object = object_line_hit(door_position, CVector::new(door_position.x, door_position.y, end_z));
+        match (building, object) {
+            (Some(a), Some(b)) => Some(if (a - door_position.z).abs() < (b - door_position.z).abs() { a } else { b }),
+            (a, b) => a.or(b),
+        }
+    };
+    let upper = vertical_hit(1000.0);
+    if upper.is_some_and(|z| z > door_position.z && z < door_position.z + 0.6) { return Some(false); }
+    let Some(floor) = vertical_hit(-1000.0) else { return Some(false); };
+    Some(!upper.is_some_and(|z| z != 0.0 && z < floor))
+}
+
 /// Matrix written by `CPed::LineUpPedWithCar`. While the animation root is
 /// still outside the cabin re3 keeps the ped upright at the calculated door
 /// position. Once `seatPosMult` reaches 0.2 it copies the complete vehicle
@@ -831,7 +904,7 @@ pub(crate) fn process_script_ped_on_foot_objectives(
                 | eObjective::OBJECTIVE_FOLLOW_CHAR_IN_FORMATION
         );
         let path_seek_objective =
-            area_objective || route_objective || entity_seek_objective || is_kill || is_flee;
+            area_objective || route_objective || entity_seek_objective || is_kill || is_flee || is_seeking_car;
         let target_is_in_vehicle =
             target_slot.and_then(|slot| scratch.targets.get(&slot)).is_some_and(|target| target.in_vehicle);
         let weapon_range = if is_kill {
@@ -989,10 +1062,10 @@ pub(crate) fn process_script_ped_on_foot_objectives(
         // `FindBestCoordsFromNodes` whenever `bUsePedNodeSeek` is set.  Keep
         // the authored destination in `target`; `seek_target` may temporarily
         // be a PATH_PED node and is discarded once that node is reached.
-        let mut seek_target = ped
+        let mut seek_target = if is_seeking_car { target } else { ped
             .next_path_node
             .and_then(|node| file_loader.path_find.path_nodes.get(node))
-            .map_or(target, |node| node.pos);
+            .map_or(target, |node| node.pos) };
         if path_seek_objective {
             let direct_static_clear = file_loader
                 .world
@@ -1017,9 +1090,11 @@ pub(crate) fn process_script_ped_on_foot_objectives(
                     bevy::log::warn_once!(target: "rustgta3::ped_avoidance", "ped_avoidance_missing_owner");
                     continue;
                 };
-                if let Some(walk_around) = walk_around::native_vehicle_corner(
+                let entry = (is_seeking_car && ped.seek_target == Some(blocker.vehicle_slot))
+                    .then(|| (ped.veh_door, vehicles.get(obstacle).is_ok_and(|(_, core)| core.flags.is_van)));
+                if let Some(walk_around) = walk_around::native_vehicle_corner_for_entry(
                     ped, locomotion, &mut avoidance, position, blocker, obstacle, previous_obstacle, vehicle_colliders,
-                    &file_loader, now_ms, &mut general,
+                    &file_loader, now_ms, &mut general, entry, None,
                 ) {
                     if previous_obstacle != Some(obstacle) {
                         commands.entity(ped_entity).insert(
@@ -1036,7 +1111,7 @@ pub(crate) fn process_script_ped_on_foot_objectives(
                     }
                 }
             }
-            if !direct_static_clear
+            if !is_seeking_car && !direct_static_clear
                 && seek_target == target
                 && let Some(node) = find_script_ped_seek_node(
                     &file_loader.path_find,
@@ -2244,6 +2319,66 @@ struct PedVehicleCollider {
     max: CVector,
 }
 
+#[derive(Default)]
+pub(crate) struct PlayerVehicleSeekScratch {
+    nearby: Vec<Entity>,
+    colliders: Vec<PedVehicleCollider>,
+}
+
+/// Player Seek uses the same native vehicle corners as NPC Seek. Sector
+/// membership supplies identities; current COL and transforms stay borrowed.
+pub(crate) fn player_vehicle_walk_target(
+    ped: &mut CPed,
+    locomotion: &mut PedLocomotion,
+    avoidance: &mut crate::peds::PedObstacle::PedObstacleAvoidance,
+    previous_obstacle: Option<Entity>,
+    position: CVector,
+    target: CVector,
+    actors: &crate::control::ScriptEntities::ScriptEntityWorld,
+    loader: &CFileLoader,
+    spatial: &crate::collision::VehicleSpatial::VehicleCollisionSpatial,
+    scratch: &mut PlayerVehicleSeekScratch,
+    now_ms: u32,
+    general: &mut CGeneral,
+    move_speed: f32,
+) -> (CVector, Option<Entity>) {
+    spatial.grid.candidates(position, 20.0, &mut scratch.nearby);
+    scratch.colliders.clear();
+    scratch.colliders.extend(scratch.nearby.iter().filter_map(|&entity| {
+        let vehicle = actors.vehicles.get_entity(entity)?;
+        if actors.vehicle_entity(vehicle.handle()) != Some(entity) { return None; }
+        let core = vehicle.base().core;
+        if !core.physical.entity.flags.uses_collision { return None; }
+        let col = loader.model_info.col_model(core.physical.entity.model_index.max(0) as usize)?;
+        Some(PedVehicleCollider {
+            vehicle_slot: CPoolHandle(vehicle.handle()).index(), matrix: core.physical.entity.matrix,
+            min: CVector::new(col.bounding_box.min.x, col.bounding_box.min.y, col.bounding_box.min.z),
+            max: CVector::new(col.bounding_box.max.x, col.bounding_box.max.y, col.bounding_box.max.z),
+        })
+    }));
+    let seeking_car = ped.ped_state == PedState::PED_SEEK_CAR;
+    let target = if seeking_car {
+        ped.seek_target.and_then(|slot| possibly_find_better_pos_to_seek_car(position, target,
+            ped.veh_door, slot, &scratch.colliders)).unwrap_or(target)
+    } else { target };
+    let action = CVector::new(ped.action_x, ped.action_y, position.z);
+    if previous_obstacle.is_some() && now_ms <= ped.ped_state_timer && (ped.action_x != 0.0 || ped.action_y != 0.0)
+        && (action.x - position.x).hypot(action.y - position.y) >= 0.5
+    {
+        return (action, previous_obstacle);
+    }
+    ped.action_x = 0.0; ped.action_y = 0.0; ped.ped_state_timer = 0;
+    let Some(blocker_index) = script_ped_segment_blocking_vehicle(position, target, &scratch.colliders) else { return (target, None); };
+    let blocker = &scratch.colliders[blocker_index];
+    let Some(handle) = actors.vehicle_handle_for_slot(blocker.vehicle_slot) else { return (target, None); };
+    let Some(entity) = actors.vehicle_entity(handle) else { return (target, None); };
+    let entry = (seeking_car && ped.seek_target == Some(blocker.vehicle_slot)).then(|| (
+        ped.veh_door, actors.vehicles.get(&actors.index, &handle).is_some_and(|vehicle| vehicle.base().core.flags.is_van)));
+    let corner = walk_around::native_vehicle_corner_for_entry(ped, locomotion, avoidance,
+        position, blocker, entity, previous_obstacle, &scratch.colliders, loader, now_ms, general, entry, Some(move_speed));
+    (corner.unwrap_or(target), corner.map(|_| entity))
+}
+
 fn script_ped_vehicle_position_blocked(
     position: CVector,
     colliders: &[PedVehicleCollider],
@@ -2324,11 +2459,10 @@ fn script_ped_seek_move_state(
         if ped.flags.is_running {
             return eMoveState::PEDMOVE_RUN;
         }
-        return if seek_distance < 2.0 {
-            eMoveState::PEDMOVE_WALK
-        } else {
-            ped.move_state
-        };
+        // ProcessObjective can transiently set RUN when starting entry. Seek
+        // selects WALK again unless SCM's bIsRunning explicitly requests RUN;
+        // retaining the previous move state makes SET_CHAR_RUNNING(false) fail.
+        return eMoveState::PEDMOVE_WALK;
     }
 
     if matches!(
@@ -2772,6 +2906,15 @@ mod script_ped_path_tests {
             script_ped_seek_move_state(&ped, eObjective::OBJECTIVE_ENTER_CAR_AS_DRIVER, 1.0, None),
             eMoveState::PEDMOVE_WALK
         );
+
+        // SetObjective/ProcessObjective can leave RUN from the previous goal.
+        // SET_CHAR_RUNNING(false) must still make both entry roles walk.
+        ped.move_state = eMoveState::PEDMOVE_RUN;
+        for objective in [eObjective::OBJECTIVE_ENTER_CAR_AS_DRIVER, eObjective::OBJECTIVE_ENTER_CAR_AS_PASSENGER] {
+            for distance in [1.0, 8.0] {
+                assert_eq!(script_ped_seek_move_state(&ped, objective, distance, None), eMoveState::PEDMOVE_WALK);
+            }
+        }
 
         ped.flags.is_running = true;
         assert_eq!(

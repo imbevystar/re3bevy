@@ -23,6 +23,36 @@ pub enum VehicleSeat {
     Passenger(u8),
 }
 
+/// CPed::GetNearestDoor: a protected front passenger redirects a driver to
+/// the left door when that door has room. A blocked left door still permits
+/// the native right-door fallback; distance ties prefer the right door.
+pub(crate) fn nearest_driver_door(
+    position: CVector,
+    left: Option<CVector>,
+    right: Option<CVector>,
+    protected_right_passenger: bool,
+) -> Option<(usize, CVector)> {
+    let distance = |point: CVector| (point.x - position.x).powi(2) + (point.y - position.y).powi(2);
+    match (left, right) {
+        (Some(left), Some(right)) if distance(left) < distance(right) || protected_right_passenger => Some((2, left)),
+        (Some(_), Some(right)) => Some((3, right)),
+        (Some(left), None) => Some((2, left)),
+        (None, Some(right)) => Some((3, right)),
+        (None, None) => None,
+    }
+}
+
+/// ProcessObjective completes ENTER_CAR when the ped is already seated. A
+/// repeated SCM entry request can clear the completion flag after the get-in
+/// callback ran, so completion cannot depend on that callback alone.
+pub(crate) fn complete_seated_entry_objective(ped: &mut crate::peds::Ped::CPed) {
+    if ped.ped_state == PedState::PED_DRIVING
+        && matches!(ped.objective, eObjective::OBJECTIVE_ENTER_CAR_AS_DRIVER | eObjective::OBJECTIVE_ENTER_CAR_AS_PASSENGER) {
+        ped.flags.objective_completed = true;
+        ped.flags.script_objective_completed = true;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Component)]
 pub struct InVehicle {
     pub vehicle: Entity,
@@ -209,6 +239,37 @@ pub(crate) fn sync_script_vehicle_occupants(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_entry_request_completes_for_a_seated_ped_without_changing_its_goal() {
+        use crate::peds::Ped::{CPed, eObjective};
+        let mut ped = CPed::new(crate::peds::PedType::ePedType::PEDTYPE_CIVMALE,
+            &mut rustgta3_core::core::General::CGeneral::with_seed(1));
+        ped.ped_state = PedState::PED_DRIVING;
+        for objective in [eObjective::OBJECTIVE_ENTER_CAR_AS_DRIVER, eObjective::OBJECTIVE_ENTER_CAR_AS_PASSENGER] {
+            ped.objective = objective;
+            ped.flags.objective_completed = false;
+            ped.flags.script_objective_completed = false;
+            complete_seated_entry_objective(&mut ped);
+            assert!(ped.flags.objective_completed && ped.flags.script_objective_completed);
+            assert_eq!(ped.objective, objective);
+        }
+        ped.objective = eObjective::OBJECTIVE_LEAVE_CAR;
+        ped.flags.script_objective_completed = false;
+        complete_seated_entry_objective(&mut ped);
+        assert!(!ped.flags.script_objective_completed);
+    }
+
+    #[test]
+    fn driver_door_preserves_protected_passenger_and_native_blocked_side_fallback() {
+        let left = CVector::new(-1.5, 0.0, 0.0);
+        let right = CVector::new(1.5, 0.0, 0.0);
+        let claude = CVector::new(2.0, 0.0, 0.0);
+        assert_eq!(nearest_driver_door(claude, Some(left), Some(right), true), Some((2, left)));
+        assert_eq!(nearest_driver_door(claude, Some(left), Some(right), false), Some((3, right)));
+        assert_eq!(nearest_driver_door(claude, None, Some(right), true), Some((3, right)));
+        assert_eq!(nearest_driver_door(CVector::ZERO, Some(left), Some(right), false), Some((3, right)));
+    }
 
     #[test]
     fn seat_relation_keeps_vehicle_and_seat_together() {
@@ -462,6 +523,9 @@ pub(crate) struct PedVehicleObjectiveScratch {
     animated_ped_handles: HashSet<i32>,
     vehicle_profiles: HashMap<i32, PedAutomobileProfile>,
     occupied_driver_vehicles: HashSet<i32>,
+    front_passengers: HashMap<i32, (Option<usize>, bool)>,
+    mission_vehicles: HashSet<i32>,
+    requested_vehicle_slots: HashSet<usize>,
     occupied_passenger_seats:
         HashMap<i32, [bool; crate::vehicles::Vehicle::MAX_VEHICLE_PASSENGERS]>,
     relation_vehicle_by_ped: HashMap<i32, i32>,
@@ -490,6 +554,9 @@ pub(crate) fn process_ped_vehicle_objectives(
     scratch.animated_ped_handles.clear();
     scratch.vehicle_profiles.clear();
     scratch.occupied_driver_vehicles.clear();
+    scratch.front_passengers.clear();
+    scratch.mission_vehicles.clear();
+    scratch.requested_vehicle_slots.clear();
     scratch.occupied_passenger_seats.clear();
     scratch.relation_vehicle_by_ped.clear();
     scratch.vehicle_handle_by_slot.clear();
@@ -542,6 +609,13 @@ pub(crate) fn process_ped_vehicle_objectives(
                 scratch.occupied_driver_vehicles.insert(vehicle_handle);
             }
             VehicleSeat::Passenger(index) => {
+                if index == 0
+                    && let Some(ped_handle) = script_entities.ped_handle_for_entity(ped_entity)
+                    && let Some(passenger) = script_entities.peds.get(&script_entities.index, &ped_handle)
+                {
+                    scratch.front_passengers.insert(vehicle_handle,
+                        (passenger.ped.leader, passenger.ped.flags.dont_drag_me_out_car));
+                }
                 if let Some(slot) = scratch
                     .occupied_passenger_seats
                     .entry(vehicle_handle)
@@ -554,9 +628,29 @@ pub(crate) fn process_ped_vehicle_objectives(
         }
     }
 
-    // Determine door positions and availability for each vehicle
+    for (handle, ped) in script_entities.peds.iter_mut() {
+        if scratch.relation_vehicle_by_ped.contains_key(&handle)
+            && !scratch.animated_ped_handles.contains(&handle)
+        {
+            complete_seated_entry_objective(ped.ped);
+        }
+    }
+    for (handle, ped) in script_entities.peds.iter() {
+        if !scratch.animated_ped_handles.contains(handle)
+            && !scratch.relation_vehicle_by_ped.contains_key(handle)
+            && matches!(ped.ped.objective, eObjective::OBJECTIVE_ENTER_CAR_AS_DRIVER | eObjective::OBJECTIVE_ENTER_CAR_AS_PASSENGER)
+        {
+            scratch.requested_vehicle_slots.extend(ped.ped.car_in_objective);
+        }
+    }
+    // Resolve entry geometry only for cars with an active entry objective.
+    // Corner/floor COL queries for every traffic car would add needless work.
     for (handle, vehicle) in script_entities.vehicles.iter() {
         let base = vehicle.base();
+        if base.core.vehicle_created_by == crate::vehicles::Vehicle::MISSION_VEHICLE {
+            scratch.mission_vehicles.insert(*handle);
+        }
+        if !scratch.requested_vehicle_slots.contains(&CPoolHandle(*handle).index()) { continue; }
         let has_rear_doors = file_loader.as_deref().map_or(true, |loader| {
             let model_index = base.physical.entity.model_index.max(0) as usize;
             let Some(crate::modelinfo::ModelInfo::ModelInfoSlot::Vehicle(model)) =
@@ -588,7 +682,7 @@ pub(crate) fn process_ped_vehicle_objectives(
         // through `CPed::GetPositionToOpenCarDoor`, which is the authored seat
         // dummy plus handling seat offset minus the get-in animation offset
         // (`GetLocalPositionToOpenCarDoor`), not the DFF door component itself.
-        let get_door_pos = |door: usize| -> CVector {
+        let get_door_pos = |door: usize| -> Option<CVector> {
             if let Some(fl) = file_loader.as_deref()
                 && let crate::control::ScriptEntities::ScriptVehicleRef::Automobile { car, .. } = vehicle
                 && let Some(offsets) = ped_animation_offsets.as_deref()
@@ -603,8 +697,14 @@ pub(crate) fn process_ped_vehicle_objectives(
                 && let Some(pos) =
                     automobile_ped_door_world_position(fl, &car, handling, offsets, door, 1.0)
             {
-                pos
+                crate::peds::PedAI::automobile_door_has_room(fl, &script_entities, *handle,
+                    &car.vehicle.core, door, pos, None)?.then_some(pos)
             } else {
+                if file_loader.is_some() && matches!(vehicle, crate::control::ScriptEntities::ScriptVehicleRef::Automobile { .. }) {
+                    // A live automobile waits for its authored seat/IFP data.
+                    // Synthetic headless fixtures below have no file loader.
+                    return None;
+                }
                 let (lx, ly) = match door {
                     2 => (-1.0, 0.2),
                     3 => (1.0, 0.2),
@@ -612,11 +712,11 @@ pub(crate) fn process_ped_vehicle_objectives(
                     5 => (1.0, -0.8),
                     _ => (1.0, 0.0),
                 };
-                vehicle
+                Some(vehicle
                     .base()
                     .physical
                     .entity
-                    .transform_point(CVector::new(lx, ly, 0.0))
+                    .transform_point(CVector::new(lx, ly, 0.0)))
             }
         };
 
@@ -629,7 +729,7 @@ pub(crate) fn process_ped_vehicle_objectives(
                     base.entry.getting_in_flags & automobile_door_flag(door) == 0
                         && base.entry.getting_out_flags & automobile_door_flag(door) == 0
                 })
-                .map(|door| (door, get_door_pos(door)))
+                .filter_map(|door| get_door_pos(door).map(|position| (door, position)))
                 .collect()
         };
         scratch.vehicle_driver_doors.insert(*handle, driver_doors);
@@ -642,7 +742,7 @@ pub(crate) fn process_ped_vehicle_objectives(
                 && base.entry.getting_in_flags & automobile_door_flag(door) == 0
                 && base.entry.getting_out_flags & automobile_door_flag(door) == 0
             {
-                pass_doors.push((door, get_door_pos(door)));
+                if let Some(position) = get_door_pos(door) { pass_doors.push((door, position)); }
             }
         }
         scratch.vehicle_passenger_doors.insert(*handle, pass_doors);
@@ -656,6 +756,9 @@ pub(crate) fn process_ped_vehicle_objectives(
         vehicle_can_enter,
         vehicle_passenger_doors,
         vehicle_driver_doors,
+        front_passengers,
+        mission_vehicles,
+        occupied_passenger_seats,
         starts,
         ..
     } = &mut *scratch;
@@ -698,7 +801,14 @@ pub(crate) fn process_ped_vehicle_objectives(
                         };
                         let (target_door, target_pos) = if driver {
                             let doors = vehicle_driver_doors.get_mut(&vehicle_handle)?;
-                            let best_idx = nearest_door(doors)?;
+                            let protected = front_passengers.get(&vehicle_handle)
+                                .is_some_and(|(leader, dont_drag)| *leader == Some(CPoolHandle(ped_handle).index()) || *dont_drag)
+                                || mission_vehicles.contains(&vehicle_handle)
+                                    && occupied_passenger_seats.get(&vehicle_handle).is_some_and(|seats| seats[0]);
+                            let (door, _) = nearest_driver_door(ped_pos,
+                                doors.iter().find(|(door, _)| *door == 2).map(|(_, point)| *point),
+                                doors.iter().find(|(door, _)| *door == 3).map(|(_, point)| *point), protected)?;
+                            let best_idx = doors.iter().position(|(candidate, _)| *candidate == door)?;
                             doors.remove(best_idx)
                         } else {
                             let doors = vehicle_passenger_doors.get_mut(&vehicle_handle)?;
@@ -720,7 +830,13 @@ pub(crate) fn process_ped_vehicle_objectives(
                             // Ped is still outside door interaction radius: seek toward the door
                             entity.ped.veh_door = target_door as i32;
                             entity.ped.seek_pos = target_pos;
+                            entity.ped.seek_target = Some(vehicle_slot);
                             entity.ped.ped_state = PedState::PED_SEEK_CAR;
+                            // ProcessObjective restarts a still entry seeker
+                            // in RUN; SeekCar slows it inside two metres.
+                            if entity.ped.move_state == crate::peds::Ped::eMoveState::PEDMOVE_STILL {
+                                entity.ped.move_state = crate::peds::Ped::eMoveState::PEDMOVE_RUN;
+                            }
                             if close_enough && (!height_matches || !can_enter_vehicle) {
                                 entity.ped.move_state = eMoveState::PEDMOVE_STILL;
                             }

@@ -1035,10 +1035,9 @@ impl WorldPlayerAccess for CWorldPlayers<'_, '_> {
     }
 }
 
-/// A player may own the driver control path only while re3 would still be in
-/// PED_DRIVING and the car has not already transitioned to STATUS_WRECKED.
-/// Keeping this boundary explicit prevents an InVehicle relation retained by
-/// SetDead from resurrecting a wreck on the following frame.
+/// CAutomobile::ProcessControl dispatches on vehicle status, independently of
+/// driver identity. SCM GOTO changes even a player-occupied car to PHYSICS so
+/// AI can drive it; SET_CAR_STATUS(PLAYER) returns control after the scene.
 pub(crate) fn player_can_drive_related_vehicle(
     player: crate::peds::PlayerPed::PlayerPedRef<'_>,
     relation: InVehicle,
@@ -1047,7 +1046,7 @@ pub(crate) fn player_can_drive_related_vehicle(
     relation.seat == VehicleSeat::Driver
         && player.ped.ped_state == PedState::PED_DRIVING
         && !player.ped.dying_or_dead()
-        && vehicle_status != eEntityStatus::STATUS_WRECKED
+        && vehicle_status == eEntityStatus::STATUS_PLAYER
 }
 
 /// Short-lived non-ECS adapter used only while boot effects are evaluated
@@ -1951,7 +1950,7 @@ pub fn update_player_movement_animation(
 }
 
 #[derive(SystemParam)]
-pub(crate) struct PlayerControlFrame<'w> {
+pub(crate) struct PlayerControlFrame<'w, 's> {
     pads: Res<'w, CPads>,
     cursor_capture: Option<Res<'w, crate::core::Game::GameplayCursorCapture>>,
     vehicle_spatial: Res<'w, crate::collision::VehicleSpatial::VehicleCollisionSpatial>,
@@ -1977,6 +1976,8 @@ pub(crate) struct PlayerControlFrame<'w> {
     point_lights: Option<ResMut<'w, CPointLights>>,
     bullets: Option<ResMut<'w, crate::weapons::BulletInfo::CBulletInfoPool>>,
     gameplay_input: Res<'w, crate::core::EnhancedInput::GtaGameplayInput>,
+    avoidance: Query<'w, 's, (&'static mut super::PedObstacle::PedObstacleAvoidance, Option<&'static super::PedObstacle::PedWalkAroundObstacle>)>,
+    vehicle_seek_scratch: Local<'s, super::PedAI::PlayerVehicleSeekScratch>,
 }
 
 fn player_vehicle_door_occupant(
@@ -2015,6 +2016,51 @@ fn player_should_carjack_door(
     occupant
         .and_then(|ped_handle| script_entities.peds.get(&script_entities.index, &ped_handle))
         .is_some_and(|occupant| occupant.ped.ped_state == PedState::PED_DRIVING)
+}
+
+fn player_front_passenger_is_protected(
+    entities: &ScriptEntityWorld,
+    vehicle: i32,
+    player_slot: usize,
+    mission_vehicle: bool,
+) -> bool {
+    if mission_vehicle && entities.vehicle_entity(vehicle).is_some_and(|vehicle|
+        entities.relation_occupants(vehicle).any(|(_, seat)| seat == VehicleSeat::Passenger(0)))
+    {
+        return true;
+    }
+    player_vehicle_door_occupant(entities, vehicle, 3)
+        .and_then(|handle| entities.peds.get(&entities.index, &handle))
+        .is_some_and(|passenger| passenger.ped.leader == Some(player_slot)
+            || passenger.ped.flags.dont_drag_me_out_car)
+}
+
+fn player_driver_door(
+    actors: &ScriptEntityWorld,
+    loader: &CFileLoader,
+    handling: &cHandlingDataMgr,
+    offsets: &CPedAnimationOffsets,
+    handle: i32,
+    position: CVector,
+    player_slot: usize,
+    previous_door: usize,
+) -> Option<(usize, CVector)> {
+    let crate::control::ScriptEntities::ScriptVehicleRef::Automobile { car, .. } =
+        actors.vehicles.get(&actors.index, &handle)? else { return None; };
+    let core = car.vehicle.core;
+    let handling = core.handling_id.and_then(|id| usize::try_from(id).ok())
+        .and_then(|id| handling.get_handling_data(id))?;
+    let drag_offset = player_vehicle_door_occupant(actors, handle, previous_door)
+        .map(|_| offsets.ped_quick_dragged_out_car);
+    let candidate = |door| {
+        let point = automobile_ped_door_world_position(loader, &car, handling, offsets, door, 1.0)?;
+        crate::peds::PedAI::automobile_door_has_room(loader, actors, handle, core, door, point, drag_offset)?
+            .then_some(point)
+    };
+    crate::peds::VehicleRelations::nearest_driver_door(position, candidate(2), candidate(3),
+        player_front_passenger_is_protected(actors, handle, player_slot,
+            core.vehicle_created_by == crate::vehicles::Vehicle::MISSION_VEHICLE)
+        || car.vehicle.entry.getting_in_flags & automobile_door_flag(3) != 0)
 }
 pub(crate) fn update_player_on_foot_control(
     frame: PlayerControlFrame,
@@ -2061,6 +2107,8 @@ pub(crate) fn update_player_on_foot_control(
         mut point_lights,
         mut bullets,
         gameplay_input,
+        mut avoidance,
+        mut vehicle_seek_scratch,
     } = frame;
     let object_colliders = script_object_collision_snapshots(&script_entities.objects);
     let control_enabled = bridge.player_control_enabled && !bridge.playing_intro;
@@ -2194,6 +2242,7 @@ pub(crate) fn update_player_on_foot_control(
         return;
     }
     if let Some(relation) = player_relation {
+        super::VehicleRelations::complete_seated_entry_objective(player.ped);
         let vehicle_handle = script_entities.vehicle_handle_for_entity(relation.vehicle);
         let exit_just_down = pad.exit_vehicle_just_down();
         let script_leave_car = player.ped.objective == eObjective::OBJECTIVE_LEAVE_CAR
@@ -2881,41 +2930,17 @@ pub(crate) fn update_player_on_foot_control(
                     )?;
                     let dx = door_position.x - position.x;
                     let dy = door_position.y - position.y;
-                    Some((door, dx * dx + dy * dy))
+                    Some((door, door_position, dx * dx + dy * dy))
                 };
                 // re3 keeps driver-door selection and passenger-seat
                 // selection separate. Passenger objectives only consider
                 // vacant seats; driver objectives may deliberately choose an
                 // occupied door and transition into the carjack state.
                 let selected_door = if driver {
-                    let left = candidate(2);
-                    let right = candidate(3);
-                    match (left, right) {
-                        (Some(left), Some(right)) if left.1 < right.1 => Some(left.0),
-                        (Some(left), Some(right)) => {
-                            let player_slot = CPoolHandle(player.state.pool_handle).index();
-                            let protected_right_passenger =
-                                player_vehicle_door_occupant(&script_entities, handle, 3)
-                                    .and_then(|ped_handle| script_entities.peds.get(&script_entities.index, &ped_handle))
-                                    .is_some_and(|passenger| {
-                                        passenger.ped.leader == Some(player_slot)
-                                            || passenger.ped.flags.dont_drag_me_out_car
-                                            || car.vehicle.core.vehicle_created_by
-                                                == crate::vehicles::Vehicle::MISSION_VEHICLE
-                                    });
-                            let right_flag = automobile_door_flag(3);
-                            if protected_right_passenger
-                                || car.vehicle.entry.getting_in_flags & right_flag != 0
-                            {
-                                Some(left.0)
-                            } else {
-                                Some(right.0)
-                            }
-                        }
-                        (Some(left), None) => Some(left.0),
-                        (None, Some(right)) => Some(right.0),
-                        (None, None) => None,
-                    }
+                    player_driver_door(&script_entities, &file_loader, &handling_manager,
+                        &ped_animation_offsets, handle, position,
+                        CPoolHandle(player.state.pool_handle).index(), player.ped.veh_door as usize)
+                        .map(|(door, _)| door)
                 } else if car.vehicle.core.flags.is_bus {
                     candidate(3).map(|candidate| candidate.0)
                 } else {
@@ -2925,7 +2950,7 @@ pub(crate) fn update_player_on_foot_control(
                             player_vehicle_door_occupant(&script_entities, handle, door).is_none()
                         })
                         .filter_map(candidate)
-                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .min_by(|a, b| a.2.total_cmp(&b.2))
                         .map(|candidate| candidate.0)
                 };
                 selected_door.map(|door| (handle, door))
@@ -2958,7 +2983,17 @@ pub(crate) fn update_player_on_foot_control(
                 .ped
                 .seek_target
                 .and_then(|slot| script_entities.vehicle_handle_for_slot(slot));
-            let door = usize::try_from(player.ped.veh_door).ok();
+            let door = if player.ped.objective == eObjective::OBJECTIVE_ENTER_CAR_AS_DRIVER {
+                vehicle_handle.and_then(|handle| player_driver_door(
+                    &script_entities, &file_loader, &handling_manager, &ped_animation_offsets,
+                    handle, player.position(), CPoolHandle(player.state.pool_handle).index(), player.ped.veh_door as usize,
+                )).map(|(door, _)| door)
+            } else { usize::try_from(player.ped.veh_door).ok() };
+            if let Some(door) = door {
+                // GetNearestDoor runs on every SeekCar tick. A passenger who
+                // starts boarding during our approach can change the safe side.
+                player.ped.veh_door = door as i32;
+            }
             let target = vehicle_handle.zip(door).and_then(|(handle, door)| {
                 let crate::control::ScriptEntities::ScriptVehicleRef::Automobile { car, .. } =
                     script_entities.vehicles.get(&script_entities.index, &handle)?
@@ -2985,9 +3020,24 @@ pub(crate) fn update_player_on_foot_control(
             if let Some((handle, door, door_position, blocked)) = target {
                 player.ped.seek_pos = door_position;
                 let position = player.position();
+                let walk_target = if let Ok((mut history, obstacle)) = avoidance.get_mut(player_entity) {
+                    let previous = obstacle.map(super::PedObstacle::PedWalkAroundObstacle::entity);
+                    let move_speed = player.state.move_speed;
+                    let (point, blocker) = super::PedAI::player_vehicle_walk_target(
+                        &mut player.ped, &mut player.locomotion, &mut history, previous,
+                        position, door_position, &script_entities, &file_loader, &vehicle_spatial,
+                        &mut vehicle_seek_scratch, now_ms, &mut general, move_speed);
+                    if let Some(blocker) = blocker && previous != Some(blocker) {
+                        script_entities.commands.entity(player_entity).insert(super::PedObstacle::PedWalkAroundObstacle::new(blocker));
+                    }
+                    point
+                } else {
+                    bevy::log::warn_once!("player_vehicle_seek_missing_avoidance_owner");
+                    door_position
+                };
                 let delta = CVector::new(
-                    door_position.x - position.x,
-                    door_position.y - position.y,
+                    walk_target.x - position.x,
+                    walk_target.y - position.y,
                     0.0,
                 );
                 let distance = (delta.x * delta.x + delta.y * delta.y).sqrt();
@@ -2995,7 +3045,7 @@ pub(crate) fn update_player_on_foot_control(
                     player.state.move_speed = 0.0;
                     player.ped.move_state = eMoveState::PEDMOVE_STILL;
                     seek_vehicle_handle = Some(handle);
-                } else if distance > player.ped.distance_to_count_seek_done {
+                } else if distance > player.ped.distance_to_count_seek_done || walk_target != door_position {
                     // PlayerPed::ProcessControl(PED_SEEK_CAR) and CPed::Seek:
                     // authored locomotion approaches the live door position;
                     // no kinematic warp is used.
@@ -3008,8 +3058,8 @@ pub(crate) fn update_player_on_foot_control(
                         eMoveState::PEDMOVE_RUN
                     };
                     player.locomotion.rotation_dest = CGeneral::get_radian_angle_between_points(
-                        door_position.x,
-                        door_position.y,
+                        walk_target.x,
+                        walk_target.y,
                         position.x,
                         position.y,
                     );
@@ -3213,49 +3263,10 @@ pub(crate) fn update_player_on_foot_control(
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(handle, _)| handle);
         if let Some(handle) = nearest {
-            let Some((door, door_position)) =
-                script_entities.vehicles.get(&script_entities.index, &handle)
-                    .and_then(|vehicle| match vehicle {
-                        crate::control::ScriptEntities::ScriptVehicleRef::Automobile { car, .. } => {
-                            let candidate = |door: usize| {
-                                let flag = automobile_door_flag(door);
-                                if car.vehicle.entry.getting_in_flags & flag != 0
-                                    || car.vehicle.entry.getting_out_flags & flag != 0
-                                {
-                                    return None;
-                                }
-                                let handling = car
-                                    .vehicle.core.handling_id
-                                    .and_then(|id| usize::try_from(id).ok())
-                                    .and_then(|id| handling_manager.get_handling_data(id))?;
-                                let position = automobile_ped_door_world_position(
-                                    &file_loader,
-                                    &car,
-                                    handling,
-                                    &ped_animation_offsets,
-                                    door,
-                                    1.0,
-                                )?;
-                                let dx = position.x - player_position.x;
-                                let dy = position.y - player_position.y;
-                                Some((door, position, dx * dx + dy * dy))
-                            };
-                            // re3 manual enter always sets
-                            // OBJECTIVE_ENTER_CAR_AS_DRIVER. SeekCar then calls
-                            // GetNearestDoor, which only considers the two front
-                            // doors. Rear doors are reserved for explicit
-                            // passenger objectives (missions/taxis/etc.).
-                            [2_usize, 3]
-                                .iter()
-                                .filter_map(|&d| candidate(d))
-                                .min_by(|a, b| a.2.total_cmp(&b.2))
-                                .map(|(door, position, _)| (door, position))
-                        }
-                        _ => None,
-                    })
-            else {
-                return;
-            };
+            let Some((door, door_position)) = player_driver_door(
+                &script_entities, &file_loader, &handling_manager, &ped_animation_offsets,
+                handle, player_position, CPoolHandle(player.state.pool_handle).index(), player.ped.veh_door as usize,
+            ) else { return; };
             let vehicle_slot = CPoolHandle(handle).index();
             player.ped.set_objective_entity(eObjective::OBJECTIVE_ENTER_CAR_AS_DRIVER,
                 vehicle_slot,
@@ -3533,6 +3544,19 @@ pub(crate) fn update_player_on_foot_control(
     } else if seek_vehicle_handle.is_some() {
         true
     } else if let Some(target) = player_script_seek {
+        let position = player.position();
+        let target = if let Ok((mut history, obstacle)) = avoidance.get_mut(player_entity) {
+            let previous = obstacle.map(super::PedObstacle::PedWalkAroundObstacle::entity);
+            let move_speed = player.state.move_speed;
+            let (point, blocker) = super::PedAI::player_vehicle_walk_target(
+                &mut player.ped, &mut player.locomotion, &mut history, previous,
+                position, target, &script_entities, &file_loader, &vehicle_spatial,
+                &mut vehicle_seek_scratch, now_ms, &mut general, move_speed);
+            if let Some(blocker) = blocker && previous != Some(blocker) {
+                script_entities.commands.entity(player_entity).insert(super::PedObstacle::PedWalkAroundObstacle::new(blocker));
+            }
+            point
+        } else { target };
         apply_player_script_seek_step(player, target, dt)
     } else if mouse_runaround_state && has_block_association {
         false
@@ -3658,7 +3682,9 @@ pub(crate) fn update_player_on_foot_control(
             &script_entities,
             &object_colliders,
             &file_loader,
-            seek_vehicle_handle,
+            // Seeking does not disable vehicle collision. Only SetEnterCar,
+            // after arriving at the door, disables the ped's collision.
+            None,
         );
         pos = dynamic_motion.position;
         if let Some(support) = dynamic_motion.landing_support {
@@ -8817,6 +8843,20 @@ mod tests {
             relation,
             eEntityStatus::STATUS_WRECKED,
         ));
+    }
+
+    #[test]
+    fn scm_can_drive_a_player_occupied_car_until_it_restores_player_status() {
+        let mut player = CPlayerPed::new(&mut CGeneral::default(), None);
+        player.ped.ped_state = PedState::PED_DRIVING;
+        let driver = InVehicle::driver(Entity::from_raw_u32(7).unwrap());
+        for status in [eEntityStatus::STATUS_PHYSICS, eEntityStatus::STATUS_SIMPLE,
+            eEntityStatus::STATUS_PLAYER_DISABLED, eEntityStatus::STATUS_ABANDONED,
+            eEntityStatus::STATUS_WRECKED] {
+            assert!(!player_can_drive_related_vehicle(player.as_ref(), driver, status));
+        }
+        assert!(player_can_drive_related_vehicle(player.as_ref(), driver, eEntityStatus::STATUS_PLAYER));
+        assert!(!player_can_drive_related_vehicle(player.as_ref(), InVehicle::passenger(driver.vehicle, 0), eEntityStatus::STATUS_PLAYER));
     }
 
     #[test]
